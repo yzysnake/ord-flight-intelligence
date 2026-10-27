@@ -1,6 +1,7 @@
 """BTS staging on a synthetic monthly ZIP: names, types, UTC derivation and quality checks."""
 
 import hashlib
+import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,7 +11,7 @@ import pytest
 from ordfi.ingest import bts
 from ordfi.ingest.http import Download
 from ordfi.ingest.raw import commit_download
-from tests.bts_sample import ROWS, ZONES, write_zip
+from tests.bts_sample import HEADER, ROWS, ZONES, write_zip
 
 
 @pytest.fixture
@@ -110,3 +111,21 @@ def test_stage_is_current(tmp_path: Path) -> None:
     pl.DataFrame({"raw_sha256": ["abc", "abc"]}).write_parquet(path)
     assert bts.stage_is_current(path, "abc")
     assert not bts.stage_is_current(path, "def")
+
+
+def test_corrupt_bytes_are_replaced_and_counted(tmp_path: Path) -> None:
+    lines = [",".join(f'"{h}"' for h in HEADER) + ","]
+    lines += [",".join(f'"{v}"' if v else "" for v in row) + "," for row in ROWS]
+    payload = ("\n".join(lines) + "\n").encode().replace(b'"DL","N542DE"', b'"\xef\xbb","N542DE"')
+    path = tmp_path / "corrupt.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("On_Time_test.csv", payload)
+    frame = bts.add_utc_columns(bts.cast_columns(bts.read_month_csv(path)), ZONES)
+    assert frame["reporting_airline"][0] == "\ufffd"
+    assert bts.quality_checks(frame)["rows_invalid_text"] == 1
+
+
+def test_missing_tz_codes_are_reported(tmp_path: Path) -> None:
+    frame = bts.cast_columns(bts.read_month_csv(write_zip(tmp_path / "m.zip")))
+    partial = {k: v for k, v in ZONES.items() if k != "SLC"}
+    assert bts.missing_tz_codes(bts.add_utc_columns(frame, partial)) == ["SLC"]

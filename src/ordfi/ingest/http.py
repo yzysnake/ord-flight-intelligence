@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -82,10 +83,14 @@ def download(
         digest = hashlib.sha256()
         size = 0
         with tempfile.NamedTemporaryFile(dir=tmp_dir, prefix=".dl-", delete=False) as handle:
-            for chunk in response.iter_bytes(chunk_size=1 << 20):
-                handle.write(chunk)
-                digest.update(chunk)
-                size += len(chunk)
+            try:
+                for chunk in response.iter_bytes(chunk_size=1 << 20):
+                    handle.write(chunk)
+                    digest.update(chunk)
+                    size += len(chunk)
+            except BaseException:
+                Path(handle.name).unlink(missing_ok=True)  # never leave a partial file behind
+                raise
         return Download(
             url=str(response.url),
             tmp_path=Path(handle.name),
@@ -97,3 +102,19 @@ def download(
             last_modified=response.headers.get("last-modified"),
             etag=response.headers.get("etag"),
         )
+
+
+def sweep_partial_downloads(tmp_dir: Path, older_than_s: float = 900) -> int:
+    """Delete partial downloads (``.dl-*``) left by interrupted runs; returns the count removed.
+
+    Only files older than ``older_than_s`` are touched, so concurrent downloads are safe.
+    """
+    if not tmp_dir.exists():
+        return 0
+    cutoff = time.time() - older_than_s
+    removed = 0
+    for path in tmp_dir.glob(".dl-*"):
+        if path.is_file() and path.stat().st_mtime < cutoff:
+            path.unlink()
+            removed += 1
+    return removed

@@ -83,3 +83,4 @@ def test_airport_timezones_include_overrides() -> None:
     zones = airport_timezones()
     assert zones["ORD"] == "America/Chicago"
     assert zones["DJT"] == "America/New_York"
+    assert zones["ISN"] == "America/Chicago"

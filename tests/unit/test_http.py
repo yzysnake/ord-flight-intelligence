@@ -1,13 +1,20 @@
 """HTTP download behaviour with a mock transport: success, 304, 404 and transient retries."""
 
 import hashlib
+import os
+import time
 from pathlib import Path
 
 import httpx
 import pytest
 from tenacity import stop_after_attempt, wait_none
 
-from ordfi.ingest.http import NotModifiedError, NotPublishedError, download
+from ordfi.ingest.http import (
+    NotModifiedError,
+    NotPublishedError,
+    download,
+    sweep_partial_downloads,
+)
 from ordfi.settings import USER_AGENT
 
 URL = "https://example.test/data.zip"
@@ -63,3 +70,27 @@ def test_client_errors_are_not_retried(tmp_path: Path) -> None:
     with pytest.raises(httpx.HTTPStatusError):
         fast(client, URL, tmp_path)
     assert len(seen) == 1
+
+
+def test_failed_stream_leaves_no_partial_file(tmp_path: Path) -> None:
+    class Boom(httpx.SyncByteStream):
+        def __iter__(self):  # type: ignore[no-untyped-def]
+            yield b"partial"
+            raise httpx.ReadError("connection reset")
+
+    client, _ = client_for(httpx.Response(200, stream=Boom()))
+    fast = download.retry_with(stop=stop_after_attempt(1))
+    with pytest.raises(httpx.ReadError):
+        fast(client, URL, tmp_path)
+    assert list(tmp_path.glob(".dl-*")) == []
+
+
+def test_sweep_removes_only_stale_partials(tmp_path: Path) -> None:
+    stale, fresh, other = tmp_path / ".dl-old", tmp_path / ".dl-new", tmp_path / "keep.zip"
+    for path in (stale, fresh, other):
+        path.write_bytes(b"x")
+    hour_ago = time.time() - 3600
+    os.utime(stale, (hour_ago, hour_ago))
+    os.utime(other, (hour_ago, hour_ago))
+    assert sweep_partial_downloads(tmp_path) == 1
+    assert not stale.exists() and fresh.exists() and other.exists()
