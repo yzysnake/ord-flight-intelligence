@@ -10,6 +10,7 @@ from ordfi.ingest.raw import (
     commit_download,
     conditional_headers,
     latest,
+    load_latest,
     read_manifest,
 )
 
@@ -80,3 +81,21 @@ def test_conditional_headers() -> None:
         "If-None-Match": '"abc"',
         "If-Modified-Since": "Mon, 26 Oct 2026 20:49:33 GMT",
     }
+
+
+def test_partition_and_index(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+    when = datetime(2026, 10, 27, 5, 0, tzinfo=UTC)
+    index: dict[str, RawRecord] = {}
+    record, new = commit_download(
+        root, "src", "listing/2019-07-15", "l.html", make_download(tmp_path, b"v1", when),
+        "public-domain", partition="listings/2019/07", index=index,
+    )  # fmt: skip
+    assert new and record.path == "raw/src/listings/2019/07/l.html"
+    assert index["listing/2019-07-15"] == record
+    again, new_again = commit_download(
+        root, "src", "listing/2019-07-15", "l.html", make_download(tmp_path, b"v1", when),
+        "public-domain", partition="listings/2019/07", index=index,
+    )  # fmt: skip
+    assert not new_again and again == record
+    assert load_latest(root, "src") == {"listing/2019-07-15": record}

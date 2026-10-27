@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- FAA ATCSCC advisory crawler (`ordfi.ingest.atcscc`): daily listings (every advisory) plus full texts of ORD-related advisories; polite (1 request/s), resumable crawl into the raw zone partitioned by advisory date; staged `index` and `advisories` tables with categories and typed program fields; `make ingest-atcscc`. Raw-zone `commit_download` gains `partition` and in-memory `index` options.
 - Live collector (`ordfi.collector`): an asyncio service archiving FAA NAS Status (XML and airport events), ORD D-ATIS and CBP T5 wait times.
   - Every content change goes to daily `snapshots.jsonl`; every poll goes to `polls.jsonl`.
   - Change detection ignores volatile fields.
