@@ -12,7 +12,7 @@
 | retention | Permanent (raw ZIP + Parquet) |
 | used for | Training labels (delays, cancellations, diversions), aircraft rotations, reliability statistics (display), climatology baselines |
 | known issues | See the list below |
-| verified on | 2026-10-27 (Jul and Aug 2026 ingested and staged; UTC derivation reproduces BTS local times for ≥ 99.996 % of rows) |
+| verified on | 2026-10-27 (full backfill 2015-01..2026-08: 140 months, 74.8 M rows, 6.6 M at ORD; every airport code resolves to a time zone; UTC derivation reproduces BTS local times for ≥ 99.95 % of rows in every month, median ≥ 99.997 %) |
 
 **Known issues:**
 
@@ -25,6 +25,8 @@
 7. **Cause-code break.** For flights from **2027-01-01** (Section 511(b)), a new delay category and cancellation code E are added.
 8. **Airport codes change.** Palm Beach appears as `DJT` in 2026 data (formerly `PBI`). Build time series on the stable BTS `*_airport_id`, not the three-letter code.
 9. **Data noise.** About 1 row in 100,000 has a `CRSElapsedTime` inconsistent with its own scheduled times (6 rows in Aug 2026). Stage quality checks require ≥ 99.9 % agreement.
+10. **Carrier coverage changes.** The set of reporting carriers changes, so ORD totals are not comparable across years. Envoy (`MQ`; 138,324 ORD flights in 2015) is absent in 2016–2017, and Endeavor (`9E`), PSA (`OH`) and Republic (`YX`) appear only from 2018. From 2018 use `bts_ontime_marketing`; before 2018, restrict trends to carriers that report in every year.
+11. **Duplicate keys.** 4 rows in 2015-01..2026-08 share date, carrier, flight number, route and scheduled departure with another row (none at ORD), typically a flight re-operated after a disruption. Keys must not assume these fields are unique.
 
 ## Ingestion notes
 

@@ -1,9 +1,10 @@
 """Append-only raw zone: verbatim payloads plus a metadata manifest per source.
 
-Layout: ``<data>/raw/<source_id>/<yyyy>/<mm>/<dd>/<filename>`` (partitioned by fetch date), with
-one JSON line per stored payload in ``<data>/raw/<source_id>/_manifest.jsonl``. A payload whose
-checksum matches the latest stored version of the same logical key is not stored again, so a
-changed checksum marks a publisher revision.
+Layout: ``<data>/raw/<source_id>/<yyyy>/<mm>/<dd>/<filename>`` (partitioned by fetch date, or by an
+explicit ``partition`` for historical crawls), with one JSON line per stored payload in
+``<data>/raw/<source_id>/_manifest.jsonl``. A payload whose checksum matches the latest stored
+version of the same logical key is not stored again, so a changed checksum marks a publisher
+revision.
 """
 
 from __future__ import annotations
@@ -61,6 +62,14 @@ def read_manifest(data_root: Path, source_id: str) -> list[RawRecord]:
         return [RawRecord(**json.loads(line)) for line in handle if line.strip()]
 
 
+def load_latest(data_root: Path, source_id: str) -> dict[str, RawRecord]:
+    """Latest record per key, read once. Pass it to :func:`commit_download` for bulk crawls."""
+    index: dict[str, RawRecord] = {}
+    for record in read_manifest(data_root, source_id):
+        index[record.key] = record
+    return index
+
+
 def latest(data_root: Path, source_id: str, key: str) -> RawRecord | None:
     """Most recently stored payload for a logical key, or ``None``."""
     matches = [r for r in read_manifest(data_root, source_id) if r.key == key]
@@ -84,19 +93,25 @@ def commit_download(
     filename: str,
     dl: Download,
     licence_class: LicenceClass,
+    *,
+    partition: str | None = None,
+    index: dict[str, RawRecord] | None = None,
 ) -> tuple[RawRecord, bool]:
     """Move a finished download into the raw zone; return the record and whether it is new.
 
     If the latest stored payload for ``key`` has the same checksum, the temporary file is
-    discarded and the existing record is returned with ``False``.
+    discarded and the existing record is returned with ``False``. ``partition`` replaces the
+    fetch-date directory (e.g. ``"listings/2019/07"``); ``index`` (from :func:`load_latest`)
+    avoids re-reading the manifest and is updated in place.
     """
-    previous = latest(data_root, source_id, key)
+    previous = index.get(key) if index is not None else latest(data_root, source_id, key)
     if previous is not None and previous.sha256 == dl.sha256:
         dl.tmp_path.unlink(missing_ok=True)
         return previous, False
 
     when = dl.fetched_at
-    target_dir = source_root(data_root, source_id) / f"{when:%Y}" / f"{when:%m}" / f"{when:%d}"
+    date_dir = f"{when:%Y}/{when:%m}/{when:%d}"
+    target_dir = source_root(data_root, source_id) / (partition or date_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / filename
     if target.exists():  # same file name fetched twice in one day with different content
@@ -120,4 +135,6 @@ def commit_download(
     )
     with manifest_path(data_root, source_id).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(asdict(record), sort_keys=True) + "\n")
+    if index is not None:
+        index[key] = record
     return record, True

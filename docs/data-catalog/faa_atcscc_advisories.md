@@ -3,24 +3,30 @@
 | Field | Value |
 |---|---|
 | id | `faa_atcscc_advisories` |
-| publisher / URL / docs | FAA Air Traffic Control System Command Center. [Advisory search](https://www.fly.faa.gov/adv/advAdvisoryForm), which covers only the last 15 days |
+| publisher / URL / docs | FAA Air Traffic Control System Command Center. [Advisory search](https://www.fly.faa.gov/adv/advAdvisoryForm) |
 | licence class / licence / attribution | `public-domain` (FAA) |
-| access | HTML text pages, no API or key. Older advisories are served by direct URL: `https://www.fly.faa.gov/adv/adv_otherdis.jsp?advn=<N>&adv_date=<MMDDYYYY>` |
-| history | **Jun 2001 →** by direct URL (spot-checked 2001, 2003, 2005, 2007, 2010, 2014, 2019, 2024, 2026) |
-| cadence / latency | Real time; the listing refreshes about every 5 min. Roughly 100 advisories per day nationally [U] |
-| knowledge-time rule | The advisory's issuance timestamp, plus 5 min dissemination lag |
+| access | HTML, no API or key. **Daily listing:** `https://www.fly.faa.gov/adv/adv_list?whichAdvisories=ATCSCC&advisoryCategory=All&date=YYYY-MM-DD&…` lists every advisory of a UTC day (number, control element, brief title, send time). **Detail:** `https://www.fly.faa.gov/adv/adv_otherdis?adv_date=MMDDYYYY&advn=N` |
+| history | **Jun 2001 →** (the form accepts dates back to 1980; 2001 is the earliest verified) |
+| cadence / latency | Real time; days can grow until they end, so the crawler re-fetches the last 2 days |
+| knowledge-time rule | The advisory's **send time** (listing, UTC), plus a few minutes of dissemination |
 | retention | Permanent |
-| used for | Labels and features for ground delay programs, ground stops, airspace flow programs and reroutes at ORD and destinations; planning advisories ("possible" programs); plain-language explanations |
-| known issues | Semi-structured text whose formats changed over 25 years. Revisions and cancellations (`CNX`) must be chained to the original program. Completeness before 2001 is unknown |
-| verified on | 2026-10-26 (research study §4.2) |
+| used for | Labels and features for ground delay programs (period, hourly rates, average/maximum delay, cause), ground stops, AFPs, CTOPs and reroutes; planning advisories; plain-language explanations |
+| known issues | Advisory text is semi-structured `KEY: value` lines; keys vary by type (e.g. `CTL ELEMENT` vs `DESTINATION AIRPORT`, `CUMULATIVE PROGRAM PERIOD` vs `GDP CNX PERIOD`, reroute `VALID`). Revisions and cancellations (`CNX`) must be chained to their program. Formats changed over 25 years. **In 2015-era listings, reroute titles are truncated** (e.g. `ATCSCC ADVZY 022 DCC 01/01/15`), so some reroutes index as `other` and ORD reroutes of that era are not selected for full text. ORD GDP and ground-stop advisories are unaffected (control element `ORD/ZAU`) |
+| verified on | 2026-10-27 (15 Jul 2019 crawled end to end: 91 advisories listed, 6 ORD-related texts parsed) |
 
 ## Ingestion notes
 
-- Crawl politely: sequential requests, a pause between them, a descriptive User-Agent, and a cached daily index.
-- Parse into `atc_program` (element, type, issued_at, start/end, average/maximum delay, scope, revision number).
-- Store raw HTML verbatim. Parsers must be regression-tested on samples from each format era.
+- Implemented in `ordfi.ingest.atcscc` (`make ingest-atcscc FROM=… TO=…`).
+- **Politeness:** sequential requests, 1 s apart, with the project User-Agent.
+- **Resumable:** past days are fetched once; the last 2 days are re-fetched.
+- **Raw zone:** `raw/faa_atcscc_advisories/{listings,advisories}/<yyyy>/<mm>/…html`, verbatim, partitioned by advisory date.
+- **Full texts:** fetched only for ORD-related advisories (ORD, KORD, Chicago Center ZAU or Chicago TRACON C90 in the element or title). Other categories (e.g. national Operations Plans) can be added later with a different selector.
+- **Staged tables**, under `stage/faa_atcscc_advisories/`:
+  - `index/year=YYYY` (every listed advisory: category, cancellation flag, ORD relevance, send/known time);
+  - `advisories/year=YYYY` (full text, `fields_json`, and typed `ctl_element`, `period`, `program_rate`, `average_delay`, `maximum_delay`, `reason`).
 
 ## Open questions
 
-- Whether advisory numbers reset daily, and how to enumerate a day's advisories without gaps [U].
-- An acceptable crawl rate. Consider contacting the FAA if the historical backfill is large.
+- Completeness before 2001 (the form allows 1980).
+- An acceptable sustained crawl rate (currently 1 request/s). Contact the FAA if a faster backfill is ever needed.
+- Typed parsing of periods (e.g. `14/2219Z - 15/0259Z`) into UTC timestamps, planned for the dbt core models.

@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- FAA ATCSCC advisory crawler (`ordfi.ingest.atcscc`): daily listings (every advisory) plus full texts of ORD-related advisories; polite (1 request/s), resumable crawl into the raw zone partitioned by advisory date; staged `index` and `advisories` tables with categories and typed program fields; `make ingest-atcscc`. Raw-zone `commit_download` gains `partition` and in-memory `index` options.
 - Live collector (`ordfi.collector`): an asyncio service archiving FAA NAS Status (XML and airport events), ORD D-ATIS and CBP T5 wait times.
   - Every content change goes to daily `snapshots.jsonl`; every poll goes to `polls.jsonl`.
   - Change detection ignores volatile fields.
@@ -32,6 +33,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - BTS ingestion, found during the full backfill:
   - CSVs are decoded lossily (a corrupt source row in Aug 2018 failed the month); affected rows are counted as `rows_invalid_text`.
   - Time-zone override for `ISN` (Williston, ND; closed 2019); unresolved airport codes are now reported per month.
+  - Airport time zones fall back to airportsdata's FAA location identifiers, which resolves `TKI` (McKinney, TX) and replaces the `DJT` override; every airport code in 2015-01..2026-08 now resolves.
   - Progress lines are flushed, so logs update live.
   - Partial downloads are removed on failure, and stale ones are swept.
 
