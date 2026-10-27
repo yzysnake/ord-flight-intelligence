@@ -40,6 +40,14 @@ make ingest-bts TABLE=marketing FROM=2018-01 TO=2026-08
 make dagster        # http://127.0.0.1:3000
 ```
 
+Backfill FAA traffic-management advisories and IEM weather, then build the core tables with dbt:
+
+```bash
+make ingest-atcscc  # ATCSCC advisories, 2001 →
+make ingest-iem     # ORD METAR and TAF, 2000 →
+make dbt-build      # calendar, flight_leg, weather_obs(_hourly), atc_program → data/core
+```
+
 Archive the live feeds that have no public history (FAA NAS Status, ORD D-ATIS, CBP customs waits):
 
 ```bash
@@ -54,7 +62,7 @@ To use the environment in PyCharm: *Settings → Project → Python Interpreter 
 |---|---|
 | `src/ordfi/` | Python package: `ingest`, `timeutil`, `features`, `models`, `serving`, `quality` |
 | `tests/` | `unit/`, `property/` (point-in-time invariants), `integration/` |
-| `dbt/` | SQL transformations (staging → core → marts) |
+| `dbt/` | SQL transformations, stage → core (dbt Core v1 + DuckDB; see `dbt/README.md`) |
 | `pipelines/` | Dagster code location: assets, partitions, schedules, sensors (ADR-0003) |
 | `notebooks/` | Numbered exploratory notebooks (outputs stripped) |
 | `apps/` | Public web app, static analytics site, internal dashboards |

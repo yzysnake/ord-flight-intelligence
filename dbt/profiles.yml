@@ -1,0 +1,11 @@
+ordfi:
+  target: local
+  outputs:
+    local:
+      type: duckdb
+      # The database holds only views over the Parquet outputs; open it read-only elsewhere.
+      path: "{{ env_var('ORDFI_DATA_DIR') }}/warehouse/ordfi.duckdb"
+      external_root: "{{ env_var('ORDFI_DATA_DIR') }}/core"
+      threads: 4
+      settings:
+        TimeZone: UTC  # date casts and hour truncation in UTC, whatever the host's zone

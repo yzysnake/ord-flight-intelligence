@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- dbt project (`dbt/`, dbt Core v1 + dbt-duckdb, ADR-0002): stage sources and five core models, written as Parquet to `data/core`:
+  - `calendar`: federal holidays (actual and observed), holiday distances, America/Chicago DST.
+  - `flight_leg`: ORD departures and arrivals, marketing-carrier file from 2018 and reporting-carrier file before.
+  - `weather_obs` and `weather_obs_hourly`: ceiling, flight category and present-weather flags; latest and worst conditions per hour.
+  - `atc_program`: ORD-related GDP and ground-stop advisories, with periods parsed to UTC.
+  - dbt tests for keys, values, known holiday and DST dates and period plausibility; a CI test that builds every model on a synthetic stage; `make dbt-build`.
 - IEM weather backfill (`ordfi.ingest.iem`) for ORD, monthly from 2000, polite (1 request/s) and resumable:
   - METARs: routine, specials and 5-minute HFMETAR, fetched separately because IEM's CSV has no report-type column.
   - TAFs: IEM's parsed groups, its product overview and the verbatim bulletins.
