@@ -57,6 +57,42 @@ models:
       - name: known_time
         description: When the BTS month was first fetched, i.e. when these outcomes became available as labels.
         data_tests: [not_null]
+      - name: tail_number
+        description: Upper-cased; null when missing or a placeholder (fewer than 4 characters).
+
+  - name: aircraft_rotation
+    description: >
+      One row per flown (not cancelled) leg of an aircraft on each local date on which that
+      aircraft touches ORD, nationally, with the aircraft's previous leg. Legs are ordered by
+      actual departure: tails are the aircraft that actually flew, so the links are known
+      after the fact. Live features must use the currently assigned aircraft.
+    columns:
+      - name: flight_key
+        description: Same key as flight_leg; ORD legs link to it.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('flight_leg')
+                field: flight_key
+              config:
+                where: touches_ord
+      - name: tail_number
+        data_tests: [not_null]
+      - name: leg_seq
+        description: Order of the leg within the aircraft's local date (1 = first leg flown).
+        data_tests: [not_null]
+      - name: prev_flight_key
+        description: >
+          The aircraft's previous flown leg, on the same date or the date before (null if it
+          did not fly then). For an ORD departure this is usually the inbound arrival.
+      - name: station_continuous
+        description: The previous leg ended where this one starts (about 98 %; breaks are legs outside BTS, such as positioning or international flights).
+      - name: sched_ground_min
+        description: Scheduled departure minus the previous leg's scheduled arrival; negative after aircraft swaps.
+      - name: actual_ground_min
+        description: Actual departure minus the previous leg's actual arrival.
 
   - name: weather_obs
     description: >

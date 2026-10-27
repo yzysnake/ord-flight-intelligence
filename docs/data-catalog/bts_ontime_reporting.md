@@ -21,7 +21,7 @@
 3. **Cause fields.** Cause minutes are reported only for arrivals ≥ 15 min late. The DOT OIG found 22–43 % NAS-cause mismatches with FAA data.
 4. **Diversions.** `ArrDelay` is NULL for diverted flights; use `DivArrDelay`.
 5. **Time format.** Local `hhmm` times, including `2400`.
-6. **Tail numbers.** Tails are the *actual* aircraft, so they are post-hoc for long-horizon models, and occasionally wrong.
+6. **Tail numbers.** Tails are the *actual* aircraft, so they are post-hoc for long-horizon models, and occasionally wrong. Some carriers' tails lack the `N` prefix (Allegiant's `248NV`); a few are lowercase (`N632qx`) or placeholders (`SS1`). Chained in actual departure order, 98.2 % of legs on ORD aircraft-days start where the aircraft's previous BTS leg ended. The breaks are legs outside BTS, such as positioning or international flights (`aircraft_rotation`).
 7. **Cause-code break.** For flights from **2027-01-01** (Section 511(b)), a new delay category and cancellation code E are added.
 8. **Airport codes change.** Palm Beach appears as `DJT` in 2026 data (formerly `PBI`). Build time series on the stable BTS `*_airport_id`, not the three-letter code.
 9. **Data noise.** About 1 row in 100,000 has a `CRSElapsedTime` inconsistent with its own scheduled times (6 rows in Aug 2026). Stage quality checks require ≥ 99.9 % agreement.

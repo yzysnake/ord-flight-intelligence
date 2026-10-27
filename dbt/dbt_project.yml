@@ -15,6 +15,11 @@ flags:
 
 models:
   ordfi:
+    intermediate:
+      # Shared building blocks, inlined into the models that use them.
+      +materialized: ephemeral
     core:
       # Parquet files under $ORDFI_DATA_DIR/core, read back through views (ADR-0002).
       +materialized: external
+      +options:
+        compression: zstd
