@@ -19,3 +19,7 @@
 - The collector polls both endpoints every 60 s with a descriptive User-Agent.
 - Validate the schema on every poll and alert on drift.
 - Parse into `atc_program` and `runway_config` with `known_time = observed_at`.
+
+## Collection
+
+- Archived continuously by `ordfi.collector` since 2026-10-27, as daily `snapshots.jsonl` (changes only) and `polls.jsonl` (every poll) under `data/raw/faa_nas_status/{airport_status,airport_events}/`. See `infra/README.md`.

@@ -24,6 +24,7 @@ UTC = ZoneInfo("UTC")
 # Codes used by BTS that are missing from or differ in airportsdata. Extend as found.
 TIMEZONE_OVERRIDES: dict[str, str] = {
     "DJT": "America/New_York",  # Palm Beach, FL: BTS reports DJT in 2026 data (formerly PBI)
+    "ISN": "America/Chicago",  # Williston, ND (Sloulin Field), closed 2019; replaced by XWA
 }
 
 

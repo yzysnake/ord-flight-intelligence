@@ -25,7 +25,13 @@ from pathlib import Path
 import httpx
 import polars as pl
 
-from ordfi.ingest.http import NotModifiedError, NotPublishedError, download, make_client
+from ordfi.ingest.http import (
+    NotModifiedError,
+    NotPublishedError,
+    download,
+    make_client,
+    sweep_partial_downloads,
+)
 from ordfi.ingest.raw import (
     LicenceClass,
     RawRecord,
@@ -104,13 +110,18 @@ def to_snake(name: str) -> str:
 
 
 def read_month_csv(zip_path: Path) -> pl.DataFrame:
-    """Read the CSV inside a BTS monthly ZIP as strings, with snake_case column names."""
+    """Read the CSV inside a BTS monthly ZIP as strings, with snake_case column names.
+
+    Decoding is lossy: rare corrupt bytes at the source (e.g. a truncated byte-order mark in one
+    Aug 2018 row) become U+FFFD instead of failing the month; they are counted by
+    :func:`quality_checks` as ``rows_invalid_text``.
+    """
     with zipfile.ZipFile(zip_path) as archive:
         members = [n for n in archive.namelist() if n.lower().endswith(".csv")]
         if len(members) != 1:
             raise ValueError(f"expected one CSV in {zip_path}, found {members}")
         payload = archive.read(members[0])
-    frame = pl.read_csv(io.BytesIO(payload), infer_schema=False)
+    frame = pl.read_csv(io.BytesIO(payload), infer_schema=False, encoding="utf8-lossy")
     frame = frame.select([c for c in frame.columns if c.strip() and not c.startswith("_")])
     return frame.rename({c: to_snake(c) for c in frame.columns})
 
@@ -176,6 +187,13 @@ def _local_hhmm(utc: str, tz_column: str, zones: list[str]) -> pl.Expr:
     return out
 
 
+def missing_tz_codes(frame: pl.DataFrame) -> list[str]:
+    """Airport codes in ``frame`` with no time zone (add them to ``TIMEZONE_OVERRIDES``)."""
+    origins = frame.filter(pl.col("origin_tz").is_null())["origin"]
+    dests = frame.filter(pl.col("dest_tz").is_null())["dest"]
+    return sorted(set(origins.to_list()) | set(dests.to_list()))
+
+
 def quality_checks(frame: pl.DataFrame) -> dict[str, float | int]:
     """Share of rows whose derived UTC times reproduce the BTS local hhmm fields."""
     zones = [z for z in pl.concat([frame["origin_tz"], frame["dest_tz"]]).unique().to_list() if z]
@@ -190,11 +208,13 @@ def quality_checks(frame: pl.DataFrame) -> dict[str, float | int]:
         "wheels_off": (_local_hhmm("wheels_off_utc", "origin_tz", zones), "wheels_off"),
         "wheels_on": (_local_hhmm("wheels_on_utc", "dest_tz", zones), "wheels_on"),
     }
+    invalid_text = pl.any_horizontal(pl.col(pl.String).str.contains("\ufffd", literal=True))
     results: dict[str, float | int] = {
         "rows": frame.height,
         "rows_missing_tz": frame.filter(
             pl.col("origin_tz").is_null() | pl.col("dest_tz").is_null()
         ).height,
+        "rows_invalid_text": frame.filter(invalid_text.fill_null(False)).height,
     }
     for name, (derived, reported) in checks.items():
         both = frame.select(derived.alias("d"), normalise(reported).alias("r")).drop_nulls()
@@ -213,6 +233,7 @@ class StageResult:
     ord_rows: int
     checks: dict[str, float | int]
     raw: RawRecord
+    missing_tz_codes: tuple[str, ...] = ()
 
 
 def month_key(year: int, month: int) -> str:
@@ -261,6 +282,7 @@ def stage_month(table: BtsTable, year: int, month: int, *, data_root: Path) -> S
     frame = cast_columns(read_month_csv(data_root / record.path))
     frame = add_utc_columns(frame, airport_timezones())
     checks = quality_checks(frame)
+    missing = missing_tz_codes(frame)
     frame = frame.with_columns(
         source_id=pl.lit(table.source_id),
         raw_sha256=pl.lit(record.sha256),
@@ -273,7 +295,7 @@ def stage_month(table: BtsTable, year: int, month: int, *, data_root: Path) -> S
     frame.write_parquet(tmp, compression="zstd")
     os.replace(tmp, out)
     ord_rows = frame.filter((pl.col("origin") == "ORD") | (pl.col("dest") == "ORD")).height
-    return StageResult(out, frame.height, ord_rows, checks, record)
+    return StageResult(out, frame.height, ord_rows, checks, record, tuple(missing))
 
 
 def _months(first: str, last: str) -> list[tuple[int, int]]:
@@ -303,6 +325,8 @@ def main(argv: list[str] | None = None) -> None:
     else:
         parser.error("give --month, or both --from and --to")
     table, root = TABLES[args.table], data_dir()
+    if removed := sweep_partial_downloads(root / "tmp"):
+        print(f"removed {removed} stale partial download(s)", flush=True)
     failures: list[str] = []
     with make_client() as client:
         for year, month in months:
@@ -310,9 +334,8 @@ def main(argv: list[str] | None = None) -> None:
             try:
                 if not args.stage_only:
                     record, new = fetch_month(table, year, month, client=client, data_root=root)
-                    print(
-                        f"{key}: raw revision {record.revision} ({'new' if new else 'unchanged'})"
-                    )
+                    state = "new" if new else "unchanged"
+                    print(f"{key}: raw revision {record.revision} ({state})", flush=True)
                     if new:
                         time.sleep(args.pause)
                 latest_raw = latest(root, table.source_id, key)
@@ -320,20 +343,26 @@ def main(argv: list[str] | None = None) -> None:
                     stage_path(table, year, month, root), latest_raw.sha256
                 )
                 if current and not args.force_stage:
-                    print(f"{key}: stage already current")
+                    print(f"{key}: stage already current", flush=True)
                     continue
                 result = stage_month(table, year, month, data_root=root)
             except NotPublishedError:
-                print(f"{key}: not published yet; stopping")
+                print(f"{key}: not published yet; stopping", flush=True)
                 break
             except Exception as exc:  # keep a long backfill going; report at the end
                 failures.append(key)
-                print(f"{key}: FAILED: {type(exc).__name__}: {exc}")
+                print(f"{key}: FAILED: {type(exc).__name__}: {exc}", flush=True)
                 continue
             worst = min(float(v) for k, v in result.checks.items() if k.startswith("match_"))
             print(
                 f"{key}: staged rows={result.rows} ord_rows={result.ord_rows} "
                 f"missing_tz={result.checks['rows_missing_tz']} worst_match={worst:.6f}"
+                + (
+                    f" missing_tz_codes={','.join(result.missing_tz_codes)}"
+                    if result.missing_tz_codes
+                    else ""
+                ),
+                flush=True,
             )
     if failures:
         raise SystemExit(f"{len(failures)} month(s) failed: {', '.join(failures)}")

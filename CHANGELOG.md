@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Live collector (`ordfi.collector`): an asyncio service archiving FAA NAS Status (XML and airport events), ORD D-ATIS and CBP T5 wait times.
+  - Every content change goes to daily `snapshots.jsonl`; every poll goes to `polls.jsonl`.
+  - Change detection ignores volatile fields.
+  - PID-file supervision; `make collector-start|status|stop`.
 - BTS on-time ingestion (`ordfi.ingest.bts`):
   - conditional monthly downloads into an append-only raw zone with a checksum manifest;
   - typed Parquet staging with UTC event timestamps derived from scheduled times plus BTS minute offsets;
@@ -22,6 +26,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - ADR process (ADR-0001), plus templates for data-catalog cards and model cards.
 - ADR-0002 (Parquet + DuckDB + dbt Core v1), ADR-0003 (Dagster OSS for batch; separate live collector) and ADR-0004 (live data providers), accepted in #1.
 - Data-catalog cards for 15 Phase 1 sources.
+
+### Fixed
+
+- BTS ingestion, found during the full backfill:
+  - CSVs are decoded lossily (a corrupt source row in Aug 2018 failed the month); affected rows are counted as `rows_invalid_text`.
+  - Time-zone override for `ISN` (Williston, ND; closed 2019); unresolved airport codes are now reported per month.
+  - Progress lines are flushed, so logs update live.
+  - Partial downloads are removed on failure, and stale ones are swept.
 
 ### Changed
 
