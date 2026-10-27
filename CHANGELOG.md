@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- First EDA notebook (`notebooks/01_ord_delays_overview.ipynb`) on the core tables. It covers coverage changes, the yearly trend, season × hour of day, ORD weather, FAA programs, inbound-aircraft delay and carriers, with a table beside every chart.
+- Chart theme (`ordfi.viz`): the validated categorical and sequential palette, a light matplotlib style, and title and axis helpers.
 - dbt project (`dbt/`, dbt Core v1 + dbt-duckdb, ADR-0002): stage sources and five core models, written as Parquet to `data/core`:
   - `calendar`: federal holidays (actual and observed), holiday distances, America/Chicago DST.
   - `flight_leg`: ORD departures and arrivals, marketing-carrier file from 2018 and reporting-carrier file before.
@@ -50,4 +52,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Ruff allows the en dash and apostrophe in strings, for chart labels.
 - Environment pins dbt Core and dbt-duckdb to the v1 line (`<2`, ADR-0002) and adds `dagster`, `dagster-webserver` and `dagster-dbt` (ADR-0003); `conda-lock.yml` regenerated.
