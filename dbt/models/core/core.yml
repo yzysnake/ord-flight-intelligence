@@ -1,0 +1,125 @@
+version: 2
+
+models:
+  - name: calendar
+    description: >
+      One row per date, 2000-01-01..2030-12-31: weekday fields, US federal holidays (actual and
+      observed dates), days to the next and since the previous holiday, and America/Chicago DST.
+    columns:
+      - name: date
+        data_tests: [unique, not_null]
+      - name: day_of_week
+        description: ISO weekday, 1 = Monday .. 7 = Sunday.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 7]
+      - name: holiday
+        description: Federal holiday whose actual date this is.
+      - name: holiday_observed
+        description: Federal holiday observed (day off) on this date; Saturday → Friday, Sunday → Monday.
+      - name: days_to_holiday
+        description: Days to the next actual holiday date (0 on the day).
+      - name: days_since_holiday
+        description: Days since the previous actual holiday date (0 on the day).
+      - name: utc_offset_hours
+        description: America/Chicago UTC offset at local noon (-6 standard, -5 daylight).
+      - name: dst_change
+        description: "'start' or 'end' on the day a DST transition happens (02:00 local)."
+
+  - name: flight_leg
+    description: >
+      One row per scheduled ORD departure or arrival (BTS). From 2018 the source is the
+      marketing-carrier file; for 2015–2017 it is the reporting-carrier file, which misses some
+      carriers in those years (see the BTS data cards).
+    columns:
+      - name: flight_key
+        description: flight_date, operating carrier, flight number, origin, dest, scheduled departure (local hhmm).
+        data_tests: [unique, not_null]
+      - name: direction
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [departure, arrival]
+      - name: source_table
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [marketing, reporting]
+      - name: sched_ord_utc
+        description: >
+          Scheduled time at ORD: departure for departures, arrival for arrivals. Null for the few
+          arrivals without a scheduled elapsed time.
+      - name: valid_time
+        description: Scheduled departure (UTC).
+        data_tests: [not_null]
+      - name: known_time
+        description: When the BTS month was first fetched, i.e. when these outcomes became available as labels.
+        data_tests: [not_null]
+
+  - name: weather_obs
+    description: >
+      One row per ORD METAR (routine and special), with ceiling, FAA flight category and
+      present-weather flags. Use both report types together; IEM's labels are unreliable in 2001
+      and Jan–Jul 2006.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [valid_time, report_type]
+    columns:
+      - name: valid_time
+        data_tests: [not_null]
+      - name: known_time
+        description: Observation time + 10 min (IEM archive latency).
+        data_tests: [not_null]
+      - name: ceiling_ft
+        description: Lowest broken, overcast or vertical-visibility layer; null if none reported.
+      - name: flight_category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [VFR, MVFR, IFR, LIFR]
+      - name: has_thunder
+        description: Thunderstorm reported, including in the vicinity (VCTS).
+
+  - name: weather_obs_hourly
+    description: >
+      One row per UTC hour: the latest values reported in the hour and the worst conditions seen
+      during it. Hours without observations are kept (n_obs = 0). A row is complete only at its
+      known_time, so features as of time t must use rows with known_time <= t.
+    columns:
+      - name: valid_time
+        description: Start of the hour (UTC).
+        data_tests: [unique, not_null]
+      - name: n_obs
+        data_tests: [not_null]
+      - name: known_time
+        description: The hour's last observation time + 10 min; null for empty hours.
+
+  - name: atc_program
+    description: >
+      One row per ORD-related ATCSCC program advisory (GDP, ground stop, AFP, CTOP), with its
+      period parsed to UTC. Advisories for other airports that mention ORD, ZAU or C90 are
+      included; filter on `airport`.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [adv_date, number]
+    columns:
+      - name: program_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [gdp, ground_stop, afp, ctop]
+      - name: is_proposed
+        description: Proposed programs (e.g. "CDM PROPOSED GROUND DELAY PROGRAM") are not in effect.
+      - name: period_format
+        description: "How `period_text` was read: 'dated' (DD/HHMMZ - DD/HHMMZ), 'undated' (HHMMZ-HHMMZ) or 'until' (UNTIL HHMMZ)."
+      - name: start_utc
+        description: Period start; days are resolved to the month nearest the send time.
+      - name: end_utc
+        description: Period end; resolved after the start.
+      - name: known_time
+        description: The advisory's send time.
+        data_tests: [not_null]

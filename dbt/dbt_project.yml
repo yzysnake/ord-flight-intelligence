@@ -1,0 +1,20 @@
+name: ordfi
+version: "0.1.0"
+config-version: 2
+profile: ordfi
+require-dbt-version: [">=1.9.0", "<2.0.0"]  # dbt Core v1 line (ADR-0002)
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: target
+clean-targets: [target]
+
+flags:
+  send_anonymous_usage_stats: false
+
+models:
+  ordfi:
+    core:
+      # Parquet files under $ORDFI_DATA_DIR/core, read back through views (ADR-0002).
+      +materialized: external

@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: stage
+    description: >
+      Typed Parquet written by the `ordfi.ingest` modules under `$ORDFI_DATA_DIR/stage`
+      (one directory per source; see `docs/data-catalog/`).
+    tables:
+      - name: bts_ontime_marketing
+        description: BTS Marketing Carrier On-Time Performance, one file per month (2018 →).
+        meta:
+          external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/bts_ontime_marketing/*/*/data.parquet')"
+      - name: bts_ontime_reporting
+        description: BTS Reporting Carrier On-Time Performance, one file per month (2015 →).
+        meta:
+          external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/bts_ontime_reporting/*/*/data.parquet')"
+      - name: atcscc_index
+        description: Every listed ATCSCC advisory (daily listings), one file per year.
+        meta:
+          external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/faa_atcscc_advisories/index/*/data.parquet')"
+      - name: atcscc_advisories
+        description: Full texts and typed fields of ORD-related ATCSCC advisories, one file per year.
+        meta:
+          external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/faa_atcscc_advisories/advisories/*/data.parquet')"
+      - name: iem_asos_metar
+        description: IEM METARs (routine, special, 5-minute HFMETAR), one file per station-year.
+        meta:
+          external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/iem_asos_metar/*/*/data.parquet')"

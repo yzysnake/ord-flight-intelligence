@@ -1,0 +1,202 @@
+"""dbt core models on a tiny synthetic stage: calendar, flight legs, weather and ATC programs."""
+
+import os
+import subprocess
+import sys
+from collections.abc import Callable, Mapping
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+
+import polars as pl
+import pytest
+
+from ordfi.ingest import atcscc, iem
+from ordfi.settings import project_root
+
+UTC_TS = pl.Datetime("us", "UTC")
+FETCHED = datetime(2026, 10, 27, 5, 0, tzinfo=UTC)
+BTS_SHARED: dict[str, pl.DataType] = {
+    "flight_date": pl.Date(), "tail_number": pl.String(), "origin": pl.String(),
+    "dest": pl.String(), "origin_airport_id": pl.Int64(), "dest_airport_id": pl.Int64(),
+    "crs_dep_time": pl.String(), "dep_time": pl.String(), "crs_arr_time": pl.String(),
+    "arr_time": pl.String(), "wheels_off": pl.String(), "wheels_on": pl.String(),
+    "sched_dep_utc": UTC_TS, "sched_arr_utc": UTC_TS, "dep_utc": UTC_TS, "arr_utc": UTC_TS,
+    "wheels_off_utc": UTC_TS, "wheels_on_utc": UTC_TS, "origin_tz": pl.String(),
+    "dest_tz": pl.String(), "dep_delay": pl.Int32(), "dep_del15": pl.Boolean(),
+    "arr_delay": pl.Int32(), "arr_del15": pl.Boolean(), "taxi_out": pl.Int32(),
+    "taxi_in": pl.Int32(), "cancelled": pl.Boolean(), "cancellation_code": pl.String(),
+    "diverted": pl.Boolean(), "div_reached_dest": pl.Boolean(), "div_arr_delay": pl.Int32(),
+    "crs_elapsed_time": pl.Int32(), "actual_elapsed_time": pl.Int32(), "air_time": pl.Int32(),
+    "distance": pl.Float64(), "carrier_delay": pl.Int32(), "weather_delay": pl.Int32(),
+    "nas_delay": pl.Int32(), "security_delay": pl.Int32(), "late_aircraft_delay": pl.Int32(),
+    "total_add_gtime": pl.Int32(), "raw_sha256": pl.String(), "known_time": UTC_TS,
+    "licence_class": pl.String(),
+}  # fmt: skip
+MARKETING = {
+    **BTS_SHARED, "operating_airline": pl.String(), "flight_number_operating_airline": pl.Int64(),
+    "marketing_airline_network": pl.String(), "flight_number_marketing_airline": pl.Int64(),
+}  # fmt: skip
+REPORTING = {
+    **BTS_SHARED,
+    "reporting_airline": pl.String(),
+    "flight_number_reporting_airline": pl.Int64(),
+}
+EXTRA = {"known_time": UTC_TS, "licence_class": pl.String()}
+
+
+def at(day: int, hour: int, minute: int, month: int = 7, year: int = 2019) -> datetime:
+    return datetime(year, month, day, hour, minute, tzinfo=UTC)
+
+
+def leg(day: date, origin: str, dest: str, dep: str, dep_utc: datetime, arr_utc: datetime,
+        **carrier: object) -> dict[str, object]:  # fmt: skip
+    return {
+        "flight_date": day, "origin": origin, "dest": dest, "crs_dep_time": dep,
+        "sched_dep_utc": dep_utc, "sched_arr_utc": arr_utc, "cancelled": False,
+        "diverted": False, "known_time": FETCHED, "licence_class": "public-domain", **carrier,
+    }  # fmt: skip
+
+
+def write(
+    root: Path, relative: str, rows: list[dict[str, object]], schema: Mapping[str, pl.DataType]
+) -> None:
+    """One stage file; columns missing from a row are null, as in the real stage."""
+    path = root / "stage" / relative / "data.parquet"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pl.DataFrame(rows, schema=dict(schema)).write_parquet(path)
+
+
+def write_stage(root: Path) -> None:
+    july15 = date(2019, 7, 15)
+    write(root, "bts_ontime_marketing/year=2019/month=07", [
+        leg(july15, "ORD", "SFO", "0700", at(15, 12, 0), at(15, 16, 30), operating_airline="UA",
+            flight_number_operating_airline=1, marketing_airline_network="UA"),
+        leg(july15, "LGA", "ORD", "0600", at(15, 10, 0), at(15, 12, 45), operating_airline="G7",
+            flight_number_operating_airline=4507, marketing_airline_network="UA"),
+        leg(july15, "PDX", "SLC", "1315", at(15, 20, 15), at(15, 22, 7), operating_airline="DL",
+            flight_number_operating_airline=1209, marketing_airline_network="DL"),
+    ], MARKETING)  # fmt: skip
+    write(root, "bts_ontime_reporting/year=2017/month=07", [
+        leg(date(2017, 7, 15), "LGA", "ORD", "0600", at(15, 10, 0, year=2017),
+            at(15, 12, 45, year=2017), reporting_airline="AA", flight_number_reporting_airline=2),
+    ], REPORTING)  # fmt: skip
+    write(root, "bts_ontime_reporting/year=2019/month=07", [  # 2018+ comes from marketing
+        leg(july15, "ORD", "SFO", "0700", at(15, 12, 0), at(15, 16, 30), reporting_airline="UA",
+            flight_number_reporting_airline=1),
+    ], REPORTING)  # fmt: skip
+
+    def obs(when: datetime, kind: str, **fields: object) -> dict[str, object]:
+        return {"station": "ORD", "valid": when, "report_type": kind,
+                "known_time": when + timedelta(minutes=10), "licence_class": "public-domain",
+                **fields}  # fmt: skip
+
+    write(root, "iem_asos_metar/station=ORD/year=2019", [
+        obs(at(15, 0, 5), "hfmetar", vsby=10.0),
+        obs(at(15, 0, 9), "special", tmpf=75.0, vsby=2.0, skyc1="BKN", skyl1=800.0,
+            wxcodes="TSRA"),
+        obs(at(15, 0, 51), "routine", tmpf=78.0, sknt=3.0, vsby=10.0, skyc1="FEW", skyl1=4500.0,
+            p01i=iem.TRACE),
+        obs(at(15, 2, 51), "routine", tmpf=70.0, vsby=0.5, skyc1="OVC", skyl1=400.0),
+    ], {**iem.METAR_SCHEMA, **EXTRA})  # fmt: skip
+
+    def listed(day: date, number: int, title: str, category: str, sent: datetime,
+               element: str = "ORD/ZAU") -> dict[str, object]:  # fmt: skip
+        return {"adv_date": day, "number": number, "control_element": element, "title": title,
+                "category": category, "is_cancellation": False, "ord_related": True,
+                "send_time": sent, "known_time": sent,
+                "licence_class": "public-domain"}  # fmt: skip
+
+    def text(day: date, number: int, period: str, element: str = "ORD") -> dict[str, object]:
+        return {"adv_date": day, "number": number, "ctl_element": element, "period": period,
+                "average_delay": "130", "licence_class": "public-domain"}  # fmt: skip
+
+    july31, august1 = date(2019, 7, 31), date(2019, 8, 1)
+    write(root, "faa_atcscc_advisories/index/year=2019", [
+        listed(july15, 3, "CDM GROUND DELAY PROGRAM", "gdp", at(15, 0, 57)),
+        listed(july15, 7, "ROUTE RQD", "reroute", at(15, 1, 0), "DCC"),
+        listed(july31, 5, "CDM GROUND STOP", "ground_stop", at(31, 23, 40)),
+        listed(july31, 5, "CDM GROUND STOP", "ground_stop", at(31, 23, 41)),  # re-sent
+        listed(august1, 2, "CDM GROUND DELAY PROGRAM", "gdp", at(1, 0, 10, month=8)),
+    ], {**atcscc.INDEX_SCHEMA, "licence_class": pl.String()})  # fmt: skip
+    write(root, "faa_atcscc_advisories/advisories/year=2019", [
+        text(july15, 3, "14/2219Z - 15/0259Z"),
+        text(july15, 7, "ETD 152030 TO 160100", "KORD KMDW"),
+        text(july31, 5, "UNTIL 0100Z"),
+        text(august1, 2, "31/2300Z - 01/0200Z"),
+    ], {**atcscc.ADVISORY_SCHEMA, "licence_class": pl.String()})  # fmt: skip
+
+
+Core = Callable[[str], pl.DataFrame]  # reads one model's Parquet output
+
+
+@pytest.fixture(scope="module")
+def core(tmp_path_factory: pytest.TempPathFactory) -> Core:
+    """Build every model once with `dbt build` (models and their tests) on the synthetic stage."""
+    tmp = tmp_path_factory.mktemp("dbt")
+    data = tmp / "data"
+    write_stage(data)
+    for folder in ("core", "warehouse"):
+        (data / folder).mkdir(parents=True)
+    dbt_dir = project_root() / "dbt"
+    # A subprocess, as `make dbt-build` runs it: dbt-duckdb keeps process-wide connections.
+    build = subprocess.run(
+        [str(Path(sys.executable).with_name("dbt")), "build", "--project-dir", str(dbt_dir),
+         "--profiles-dir", str(dbt_dir), "--target-path", str(tmp / "target"),
+         "--log-path", str(tmp / "logs")],
+        env={**os.environ, "ORDFI_DATA_DIR": str(data)}, capture_output=True, text=True,
+        check=False,
+    )  # fmt: skip
+    assert build.returncode == 0, build.stdout[-4000:]
+    return lambda model: pl.read_parquet(data / "core" / f"{model}.parquet")
+
+
+def test_calendar_spans_2000_to_2030(core: Core) -> None:
+    calendar = core("calendar")
+    assert (calendar.height, calendar["date"].min(), calendar["date"].max()) == (
+        11323, date(2000, 1, 1), date(2030, 12, 31)
+    )  # fmt: skip
+
+
+def test_flight_legs_take_marketing_from_2018_and_reporting_before(core: Core) -> None:
+    legs = core("flight_leg").sort("flight_key")
+    assert legs.select(
+        "flight_key", "source_table", "direction", "marketing_carrier", "sched_ord_utc"
+    ).rows() == [
+        ("2017-07-15_AA_2_LGA_ORD_0600", "reporting", "arrival", None, at(15, 12, 45, year=2017)),
+        ("2019-07-15_G7_4507_LGA_ORD_0600", "marketing", "arrival", "UA", at(15, 12, 45)),
+        ("2019-07-15_UA_1_ORD_SFO_0700", "marketing", "departure", "UA", at(15, 12, 0)),
+    ]
+
+
+def test_weather_obs_drops_hfmetar_and_derives_categories(core: Core) -> None:
+    obs = core("weather_obs").sort("valid_time")
+    assert obs.select("report_type", "ceiling_ft", "flight_category", "has_thunder").rows() == [
+        ("special", 800.0, "IFR", True),
+        ("routine", None, "VFR", False),  # FEW is not a ceiling
+        ("routine", 400.0, "LIFR", False),
+    ]
+
+
+def test_weather_hours_keep_gaps_and_latest_values(core: Core) -> None:
+    hours = core("weather_obs_hourly").sort("valid_time")
+    assert hours.select(
+        "valid_time", "n_obs", pl.col("temp_c").round(2), "worst_flight_category", "any_thunder",
+        "known_time",
+    ).rows() == [
+        (at(15, 0, 0), 2, 25.56, "IFR", True, at(15, 1, 1)),  # temperature from 00:51
+        (at(15, 1, 0), 0, None, None, None, None),
+        (at(15, 2, 0), 1, 21.11, "LIFR", False, at(15, 3, 1)),
+    ]  # fmt: skip
+
+
+def test_atc_program_periods_resolve_across_days_and_months(core: Core) -> None:
+    programs = core("atc_program").sort("issued_at")
+    assert programs.select(
+        "adv_date", "number", "period_format", "issued_at", "start_utc", "end_utc",
+        "average_delay_min",
+    ).rows() == [
+        (date(2019, 7, 15), 3, "dated", at(15, 0, 57), at(14, 22, 19), at(15, 2, 59), 130),
+        (date(2019, 7, 31), 5, "until", at(31, 23, 41), at(31, 23, 41), at(1, 1, 0, month=8), 130),
+        (date(2019, 8, 1), 2, "dated", at(1, 0, 10, month=8), at(31, 23, 0), at(1, 2, 0, month=8),
+         130),
+    ]  # fmt: skip

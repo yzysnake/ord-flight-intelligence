@@ -1,12 +1,15 @@
 ENV_NAME  := ordfi
 PLATFORMS := -p osx-arm64 -p linux-64
 RUN       := conda run --no-capture-output -n $(ENV_NAME)
+ORDFI_DATA_DIR ?= $(CURDIR)/data
+DBT        = ORDFI_DATA_DIR=$(ORDFI_DATA_DIR) $(RUN) dbt
 # Direct interpreter path, so background processes get a real PID (not a `conda run` wrapper).
 PYTHON     = $(shell conda run -n $(ENV_NAME) python -c "import sys; print(sys.executable)")
 
 .DEFAULT_GOAL := help
 .PHONY: help env env-update lock install hooks lint format typecheck test check clean \
-        ingest-bts ingest-atcscc ingest-iem dagster collector-start collector-stop collector-status
+        ingest-bts ingest-atcscc ingest-iem dbt-build dagster collector-start collector-stop \
+        collector-status
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -52,6 +55,10 @@ ingest-atcscc: ## Crawl + stage ATCSCC advisories: FROM=2015-01-01 TO=2026-10-26
 ingest-iem: ## Fetch + stage IEM METAR/TAF for ORD: FROM=2015-01 TO=2026-10 (defaults: 2000-01 → this month)
 	$(RUN) python -m ordfi.ingest.iem $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO))
 
+dbt-build: ## Build and test the dbt core models (Parquet in data/core): SELECT=flight_leg+ to limit
+	mkdir -p $(ORDFI_DATA_DIR)/core $(ORDFI_DATA_DIR)/warehouse
+	$(DBT) build --project-dir dbt --profiles-dir dbt $(if $(SELECT),--select $(SELECT))
+
 dagster: ## Start the local Dagster UI (http://127.0.0.1:3000)
 	mkdir -p .dagster && touch .dagster/dagster.yaml
 	DAGSTER_HOME=$(CURDIR)/.dagster $(RUN) dagster dev -f pipelines/definitions.py
@@ -68,4 +75,5 @@ collector-status: ## Show live collector status and today's poll counts
 	@$(PYTHON) -m ordfi.collector --status
 
 clean: ## Remove caches and build artifacts
-	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov build dist src/*.egg-info
+	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov build dist src/*.egg-info \
+		dbt/target dbt/logs
