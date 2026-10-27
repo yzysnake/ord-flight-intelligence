@@ -21,9 +21,8 @@ import polars as pl
 
 UTC = ZoneInfo("UTC")
 
-# Codes used by BTS that are missing from or differ in airportsdata. Extend as found.
+# Codes used by BTS that airportsdata lacks under both IATA and FAA LID keys. Extend as found.
 TIMEZONE_OVERRIDES: dict[str, str] = {
-    "DJT": "America/New_York",  # Palm Beach, FL: BTS reports DJT in 2026 data (formerly PBI)
     "ISN": "America/Chicago",  # Williston, ND (Sloulin Field), closed 2019; replaced by XWA
 }
 
@@ -66,8 +65,15 @@ def local_to_utc(day: date, hhmm: str | int | None, tz_name: str) -> datetime | 
 
 @lru_cache(maxsize=1)
 def airport_timezones() -> dict[str, str]:
-    """Map IATA airport codes to IANA time-zone names (airportsdata plus local overrides)."""
-    zones = {code: entry["tz"] for code, entry in airportsdata.load("IATA").items() if entry["tz"]}
+    """Map airport codes to IANA time-zone names (airportsdata plus local overrides).
+
+    IATA codes take precedence; FAA location identifiers fill the gaps, because BTS uses them
+    for airports without an IATA code (``TKI``) and for Palm Beach since 2026 (``DJT``).
+    """
+    zones: dict[str, str] = {}
+    for table in ("LID", "IATA"):  # later tables win
+        airports = airportsdata.load(table)
+        zones.update({code: entry["tz"] for code, entry in airports.items() if entry["tz"]})
     zones.update(TIMEZONE_OVERRIDES)
     return zones
 

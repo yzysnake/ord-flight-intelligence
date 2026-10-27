@@ -79,8 +79,10 @@ def test_vectorized_matches_scalar_on_dst_edges() -> None:
     assert got == [local_to_utc(*case) for case in cases]
 
 
-def test_airport_timezones_include_overrides() -> None:
+def test_airport_timezones_include_lids_and_overrides() -> None:
     zones = airport_timezones()
     assert zones["ORD"] == "America/Chicago"
-    assert zones["DJT"] == "America/New_York"
-    assert zones["ISN"] == "America/Chicago"
+    assert zones["DJT"] == "America/New_York"  # FAA LID (Palm Beach); its IATA code is PBI
+    assert zones["TKI"] == "America/Chicago"  # FAA LID only (McKinney, TX)
+    assert zones["ISN"] == "America/Chicago"  # override: closed airport
+    assert zones["AAA"] == "Pacific/Tahiti"  # IATA (Anaa) wins over LID (Logan County, IL)
