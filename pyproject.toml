@@ -1,0 +1,59 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ordfi"
+dynamic = ["version"]
+description = "ORD Flight Intelligence: understanding and forecasting disruption at Chicago O'Hare (ORD)."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "yzysnake" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Private :: Do Not Upload",
+]
+# Runtime dependencies are managed by conda (environment.yml / conda-lock.yml).
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/yzysnake/ord-flight-intelligence"
+
+[tool.hatch.version]
+path = "src/ordfi/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ordfi"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "NPY"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ordfi"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "-m", "not integration"]
+markers = ["integration: needs network access or large fixtures (deselected by default)"]
+
+[tool.coverage.run]
+source = ["ordfi"]
+branch = true

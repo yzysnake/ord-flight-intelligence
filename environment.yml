@@ -1,0 +1,56 @@
+# Conda environment for ORD Flight Intelligence.
+# Source of truth for dependencies; conda-lock.yml pins exact builds (regenerate with `make lock`).
+# conda-forge only: avoids Anaconda's `defaults` channel and its terms-of-service requirements.
+#
+# Deferred until the matching decision/phase (see docs/research, §7 and §11):
+#   orchestration (Dagster or Prefect)  -> ADR-0003
+#   serving (FastAPI, uvicorn), Streamlit dashboards  -> Phase 2
+#   weather grids (xarray, cfgrib, herbie-data), MLflow  -> Phase 1b
+name: ordfi
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.12
+  - pip
+
+  # Data access, storage and transformation
+  - python-duckdb>=1.2
+  - pyarrow>=17
+  - pandas>=2.2
+  - polars>=1.0
+  - dbt-core>=1.9
+  - dbt-duckdb>=1.9
+  - httpx>=0.27
+  - tenacity
+  - pydantic>=2.7
+  - python-dotenv
+  - pyyaml
+
+  # Modeling
+  - scikit-learn>=1.5
+  - lightgbm>=4.5
+  - catboost=1.2.*=cpu*   # CPU build: the solver otherwise picks a CUDA variant on linux-64
+  - shap>=0.46
+  - mapie>=0.9
+
+  # Data quality
+  - pandera>=0.20
+
+  # Notebooks and visualization
+  - jupyterlab>=4
+  - ipykernel
+  - matplotlib
+  - plotly
+
+  # Development tooling
+  - pytest>=8
+  - pytest-cov
+  - hypothesis>=6
+  - ruff>=0.6
+  - mypy>=1.11
+  - pandas-stubs
+  - types-pyyaml
+  - pre-commit>=3.7
+  - nbstripout
+  - conda-lock>=2.5
