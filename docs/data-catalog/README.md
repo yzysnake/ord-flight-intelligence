@@ -50,6 +50,7 @@ Every external data source gets one card (`<source-id>.md`) **before** any code 
 | [adsb.lol](adsblol.md) | `open-share-alike` (ODbL) | ✓ (2023 →) | ✓ | Phase 1a (archive) / Phase 2 |
 | [D-ATIS via atis.info](atis_info_datis.md) | `non-commercial` (provisional) | self-archive | ✓ | Phase 1a (archive) |
 | [FAA aircraft registry](faa_aircraft_registry.md) | `public-domain` | reference | – | Phase 1a |
+| [airportsdata (time zones)](airportsdata.md) | MIT (reference) | reference | – | Phase 1a |
 
 **Provisional classes.** When a provider publishes no terms, classify it as `non-commercial`, or as `public-domain` for clearly federal works, until the terms are confirmed. Keep an open question on the card.
 

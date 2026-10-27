@@ -13,8 +13,8 @@
 version: 1
 metadata:
   content_hash:
-    osx-arm64: 7d83ec490f3573a1e31a75f78fed1b53cbe42fed83b86a60732064eaf4e0445a
-    linux-64: fe1adf3f10005d48f6f9b74e06ffeb65c9ecfc7ee253dc5f285e82e676194f6d
+    osx-arm64: 628dde1d23a2ab28fe0f4ac4eb954adcb3b9f96b6a707badc2bdf1c39bbabd32
+    linux-64: 01cfc0016665f588ba38b3dd96effa5ec282f131af182b09126593a8f09bb14b
   channels:
   - url: conda-forge
     used_env_vars: []
@@ -145,6 +145,30 @@ package:
   hash:
     md5: 653cd4e10695afac6b561c50a7eafa20
     sha256: dac8242c1cbfb004e24fb2acb32edfcb52ea7ee73bd761e0cde01b6164ca534f
+  category: main
+  optional: false
+- name: airportsdata
+  version: '20260905'
+  manager: conda
+  platform: linux-64
+  dependencies:
+    python: '>=3.11'
+  url: https://conda.anaconda.org/conda-forge/noarch/airportsdata-20260905-pyhd8ed1ab_0.conda
+  hash:
+    md5: 529801809bf179f5ef0b9748fb898f8b
+    sha256: 6c725cf16305940b3dabcbf7136ed202c166a6f051f76c6e938ac0c724335507
+  category: main
+  optional: false
+- name: airportsdata
+  version: '20260905'
+  manager: conda
+  platform: osx-arm64
+  dependencies:
+    python: '>=3.11'
+  url: https://conda.anaconda.org/conda-forge/noarch/airportsdata-20260905-pyhd8ed1ab_0.conda
+  hash:
+    md5: 529801809bf179f5ef0b9748fb898f8b
+    sha256: 6c725cf16305940b3dabcbf7136ed202c166a6f051f76c6e938ac0c724335507
   category: main
   optional: false
 - name: alembic

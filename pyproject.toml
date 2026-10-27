@@ -32,20 +32,20 @@ packages = ["src/ordfi"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "."]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF", "NPY"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ordfi"]
+known-first-party = ["ordfi", "tests"]
 
 [tool.ruff.format]
 docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.12"
-files = ["src", "tests"]
+files = ["src", "tests", "pipelines"]
 strict = true
 warn_unreachable = true
 
@@ -53,6 +53,10 @@ warn_unreachable = true
 testpaths = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config", "-m", "not integration"]
 markers = ["integration: needs network access or large fixtures (deselected by default)"]
+filterwarnings = [
+    # Dagster internals (not our code) still call the deprecated utcfromtimestamp().
+    "ignore:datetime.datetime.utcfromtimestamp\\(\\) is deprecated:DeprecationWarning:dagster",
+]
 
 [tool.coverage.run]
 source = ["ordfi"]

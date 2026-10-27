@@ -2,7 +2,7 @@
 
 Transparent, ORD-specific forecasts of airport disruption and passenger pickup timing at Chicago O'Hare (ORD).
 
-> **Status: Phase 0 (setup and decisions).** There are no data pipelines or models yet. The [research and feasibility study](docs/research/ORD_Flight_Intelligence_Feasibility_Study.md) covers the evidence, the recommended scope, the architecture and the roadmap.
+> **Status: Phase 1a (historical foundation).** BTS on-time ingestion is in place; weather, FAA advisories and the live collector are next. The [research and feasibility study](docs/research/ORD_Flight_Intelligence_Feasibility_Study.md) covers the evidence, the recommended scope, the architecture and the roadmap.
 
 ## What this project will build
 
@@ -31,6 +31,13 @@ For an exactly pinned environment, install from the lock file instead (osx-arm64
 
 ```bash
 conda-lock install -n ordfi conda-lock.yml
+```
+
+Ingest BTS on-time data (raw ZIP → typed Parquet with UTC timestamps), or run it through Dagster:
+
+```bash
+make ingest-bts TABLE=marketing FROM=2018-01 TO=2026-08
+make dagster        # http://127.0.0.1:3000
 ```
 
 To use the environment in PyCharm: *Settings → Project → Python Interpreter → Add → Conda → Existing environment → `ordfi`*.
@@ -65,8 +72,8 @@ To use the environment in PyCharm: *Settings → Project → Python Interpreter 
 
 | Phase | Scope |
 |---|---|
-| 0 | Repository, environment, ADRs, data-catalog cards, licence checks *(in progress)* |
-| 1a | Historical foundation: BTS, weather and FAA advisory ingestion; start the free live archivers |
+| 0 | Repository, environment, ADRs, data-catalog cards *(done; owner actions pending)* |
+| 1a | Historical foundation: BTS, weather and FAA advisory ingestion; start the free live archivers *(in progress)* |
 | 1b | Point-in-time feature store, Outlook models, public v0.1 |
 | 2 | Pickup Planner live beta |
 | 3 | Day-of flight risk, live connection risk, operations analytics; data-licensing decision |

@@ -7,6 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- BTS on-time ingestion (`ordfi.ingest.bts`):
+  - conditional monthly downloads into an append-only raw zone with a checksum manifest;
+  - typed Parquet staging with UTC event timestamps derived from scheduled times plus BTS minute offsets;
+  - quality checks against BTS's own local times;
+  - CLI and `make ingest-bts`.
+- Time utilities (`ordfi.timeutil`): `hhmm` parsing (incl. `2400`); DST-safe local-to-UTC conversion (scalar and vectorized); airport time zones via `airportsdata`.
+- Dagster code location (`pipelines/definitions.py`): monthly-partitioned raw and stage assets for both BTS tables, with asset checks; `make dagster`.
+- Tests for time handling (including Hypothesis property tests), the raw zone, HTTP retries and conditional requests, and BTS staging.
+- Data-catalog card for `airportsdata`.
 - Research and feasibility study v1.0 (`docs/research/`).
 - Repository scaffold: `ordfi` package (src layout), tests, CI, pre-commit hooks and Makefile.
 - Conda environment (`environment.yml`) and multi-platform lock file (`conda-lock.yml`).

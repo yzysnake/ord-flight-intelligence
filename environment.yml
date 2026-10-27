@@ -26,6 +26,7 @@ dependencies:
   - pydantic>=2.7
   - python-dotenv
   - pyyaml
+  - airportsdata          # airport coordinates + IANA time zones (MIT)
 
   # Orchestration (ADR-0003); dagster-dbt versions in lockstep with dagster
   - dagster>=1.13
