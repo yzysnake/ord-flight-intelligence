@@ -12,7 +12,7 @@
 | retention | Permanent (raw ZIP + Parquet) |
 | used for | Training labels (delays, cancellations, diversions), aircraft rotations, reliability statistics (display), climatology baselines |
 | known issues | See the list below |
-| verified on | 2026-10-26 (URL HEAD-checked; fields, rules and lag from the research study §4.2) |
+| verified on | 2026-10-27 (Jul and Aug 2026 ingested and staged; UTC derivation reproduces BTS local times for ≥ 99.996 % of rows) |
 
 **Known issues:**
 
@@ -23,12 +23,16 @@
 5. **Time format.** Local `hhmm` times, including `2400`.
 6. **Tail numbers.** Tails are the *actual* aircraft, so they are post-hoc for long-horizon models, and occasionally wrong.
 7. **Cause-code break.** For flights from **2027-01-01** (Section 511(b)), a new delay category and cancellation code E are added.
+8. **Airport codes change.** Palm Beach appears as `DJT` in 2026 data (formerly `PBI`). Build time series on the stable BTS `*_airport_id`, not the three-letter code.
+9. **Data noise.** About 1 row in 100,000 has a `CRSElapsedTime` inconsistent with its own scheduled times (6 rows in Aug 2026). Stage quality checks require ≥ 99.9 % agreement.
 
 ## Ingestion notes
 
 - Keep all 110+ columns in the raw zone. In staging, convert local times to UTC per airport time zone, handling DST and `2400`. Store the release month and fetch time.
 - ORD subset: `Origin == 'ORD' or Dest == 'ORD'`. Keep national rows for network features.
 - Pair with `bts_ontime_marketing` for codeshare and regional coverage.
+- The server honours conditional requests (`If-None-Match` / `If-Modified-Since` → HTTP 304), so re-checks of unchanged months are cheap.
+- Implemented in `ordfi.ingest.bts` and the Dagster assets `bts_ontime_reporting_raw` / `_stage` (monthly partitions from 2015-01).
 
 ## Open questions
 

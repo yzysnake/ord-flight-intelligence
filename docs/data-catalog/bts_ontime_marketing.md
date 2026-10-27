@@ -11,8 +11,8 @@
 | knowledge-time rule | Same as `bts_ontime_reporting` |
 | retention | Permanent |
 | used for | **Primary ORD flight table.** It adds `Marketing_Airline_Network`, `Operated_or_Branded_Code_Share_Partners`, `Operating_Airline` and its flight number, and a `Duplicate` flag. This matters because branded regional partners fly about 49 % of ORD domestic arrivals |
-| known issues | Codeshare duplicates: de-duplicate on the operating flight, using the `Duplicate` flag. That flights by *non-reporting* regional operators appear only here is an inference from the reporting rules [U]: verify in Phase 1a against ADS-B counts. All other caveats are as in `bts_ontime_reporting` |
-| verified on | 2026-10-26 (URL HEAD-checked; fields per the research study §4.2) |
+| known issues | Codeshare duplicates: de-duplicate on the operating flight, using the `Duplicate` flag (no ORD rows were flagged in Aug 2026). **Verified: flights by non-reporting operators appear only in this file.** In Aug 2026 that was 4,703 of 71,074 ORD rows (6.6 %): GoJet `G7` for United (4,507) and Endeavor `9E` for Delta (196). The header has a trailing space (`"Operating_Airline "`); names are stripped on read. All other caveats are as in `bts_ontime_reporting` |
+| verified on | 2026-10-27 (Aug 2026 ingested and staged: 673,065 rows; UTC derivation reproduces BTS local times for ≥ 99.9988 % of rows) |
 
 ## Ingestion notes
 
@@ -20,4 +20,4 @@
 
 ## Open questions
 
-- What share of ORD operations is missing from both files (foreign carriers, cargo, non-reporting operators)? Quantify with ADS-B in Phase 1a.
+- What share of ORD operations is missing from both files (foreign carriers, cargo, international)? Quantify with ADS-B.

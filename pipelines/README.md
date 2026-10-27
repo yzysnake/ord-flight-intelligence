@@ -1,12 +1,17 @@
 # Pipelines
 
-Dagster code location (ADR-0003):
+Dagster code location (ADR-0003): `definitions.py`.
 
-- software-defined assets with partitions (monthly BTS; daily IEM/ATCSCC/CBP; hourly forecast extraction);
-- dbt models loaded through `dagster-dbt`;
-- data-quality rules as asset checks;
-- sensors for new raw partitions and collector freshness.
+| Asset | Partitions | What it does |
+|---|---|---|
+| `bts_ontime_reporting_raw` / `_stage` | monthly from 2015-01 | Conditional download of the BTS reporting-carrier ZIP into the raw zone; typed Parquet with UTC timestamps |
+| `bts_ontime_marketing_raw` / `_stage` | monthly from 2018-01 | Same for the marketing-carrier file (primary for ORD; includes non-reporting operators) |
 
-Live collection (NAS Status, ADS-B, D-ATIS, METAR polling) runs as a separate always-on service that writes raw files only.
+Stage assets run two asset checks: `utc_derivation` (≥ 99.9 % of rows reproduce BTS local times) and `timezones_resolved`.
 
-The code location is created in Phase 1a. Until the first asset exists, batch jobs run through `make` targets.
+```bash
+make dagster                                   # UI at http://127.0.0.1:3000 (state in .dagster/)
+make ingest-bts TABLE=marketing MONTH=2026-08  # same steps without Dagster
+```
+
+Live collection (NAS Status, ADS-B, D-ATIS, METAR polling) will run as a separate always-on service that writes raw files only (ADR-0003).
