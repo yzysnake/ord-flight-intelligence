@@ -1,10 +1,12 @@
 ENV_NAME  := ordfi
 PLATFORMS := -p osx-arm64 -p linux-64
 RUN       := conda run --no-capture-output -n $(ENV_NAME)
+# Direct interpreter path, so background processes get a real PID (not a `conda run` wrapper).
+PYTHON     = $(shell conda run -n $(ENV_NAME) python -c "import sys; print(sys.executable)")
 
 .DEFAULT_GOAL := help
 .PHONY: help env env-update lock install hooks lint format typecheck test check clean \
-        ingest-bts dagster
+        ingest-bts dagster collector-start collector-stop collector-status
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -47,6 +49,17 @@ ingest-bts: ## Fetch + stage BTS months: TABLE=marketing FROM=2018-01 TO=2026-08
 dagster: ## Start the local Dagster UI (http://127.0.0.1:3000)
 	mkdir -p .dagster && touch .dagster/dagster.yaml
 	DAGSTER_HOME=$(CURDIR)/.dagster $(RUN) dagster dev -f pipelines/definitions.py
+
+collector-start: ## Start the live collector in the background (log: data/logs/collector.log)
+	@mkdir -p data/logs
+	@nohup $(PYTHON) -m ordfi.collector >> data/logs/collector.log 2>&1 &
+	@sleep 5 && $(PYTHON) -m ordfi.collector --status
+
+collector-stop: ## Stop the live collector
+	@$(PYTHON) -m ordfi.collector --stop
+
+collector-status: ## Show live collector status and today's poll counts
+	@$(PYTHON) -m ordfi.collector --status
 
 clean: ## Remove caches and build artifacts
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov build dist src/*.egg-info

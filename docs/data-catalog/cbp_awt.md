@@ -27,3 +27,7 @@
 
 - Make one POST per day covering the trailing 7 days, upsert by (date, hour), and log revisions.
 - Use a polite, descriptive User-Agent.
+
+## Collection
+
+- Archived continuously by `ordfi.collector` since 2026-10-27, as daily `snapshots.jsonl` (changes only) and `polls.jsonl` (every poll) under `data/raw/cbp_awt/ord_t5/`. See `infra/README.md`.

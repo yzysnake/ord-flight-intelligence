@@ -17,3 +17,7 @@
 ## Open questions
 
 - Contact the operator about terms, upstream source and acceptable polling rate.
+
+## Collection
+
+- Archived continuously by `ordfi.collector` since 2026-10-27, as daily `snapshots.jsonl` (changes only) and `polls.jsonl` (every poll) under `data/raw/atis_info_datis/kord/`. See `infra/README.md`.

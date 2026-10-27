@@ -2,7 +2,7 @@
 
 Transparent, ORD-specific forecasts of airport disruption and passenger pickup timing at Chicago O'Hare (ORD).
 
-> **Status: Phase 1a (historical foundation).** BTS on-time ingestion is in place; weather, FAA advisories and the live collector are next. The [research and feasibility study](docs/research/ORD_Flight_Intelligence_Feasibility_Study.md) covers the evidence, the recommended scope, the architecture and the roadmap.
+> **Status: Phase 1a (historical foundation).** BTS on-time ingestion and the live collector are in place; weather and FAA advisory history are next. The [research and feasibility study](docs/research/ORD_Flight_Intelligence_Feasibility_Study.md) covers the evidence, the recommended scope, the architecture and the roadmap.
 
 ## What this project will build
 
@@ -38,6 +38,12 @@ Ingest BTS on-time data (raw ZIP → typed Parquet with UTC timestamps), or run 
 ```bash
 make ingest-bts TABLE=marketing FROM=2018-01 TO=2026-08
 make dagster        # http://127.0.0.1:3000
+```
+
+Archive the live feeds that have no public history (FAA NAS Status, ORD D-ATIS, CBP customs waits):
+
+```bash
+make collector-start   # also: collector-status, collector-stop (see infra/README.md)
 ```
 
 To use the environment in PyCharm: *Settings → Project → Python Interpreter → Add → Conda → Existing environment → `ordfi`*.
