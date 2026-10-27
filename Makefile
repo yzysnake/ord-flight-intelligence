@@ -6,7 +6,7 @@ PYTHON     = $(shell conda run -n $(ENV_NAME) python -c "import sys; print(sys.e
 
 .DEFAULT_GOAL := help
 .PHONY: help env env-update lock install hooks lint format typecheck test check clean \
-        ingest-bts ingest-atcscc dagster collector-start collector-stop collector-status
+        ingest-bts ingest-atcscc ingest-iem dagster collector-start collector-stop collector-status
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -48,6 +48,9 @@ ingest-bts: ## Fetch + stage BTS months: TABLE=marketing FROM=2018-01 TO=2026-08
 
 ingest-atcscc: ## Crawl + stage ATCSCC advisories: FROM=2015-01-01 TO=2026-10-26 (defaults: 2001 → yesterday)
 	$(RUN) python -m ordfi.ingest.atcscc $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO))
+
+ingest-iem: ## Fetch + stage IEM METAR/TAF for ORD: FROM=2015-01 TO=2026-10 (defaults: 2000-01 → this month)
+	$(RUN) python -m ordfi.ingest.iem $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO))
 
 dagster: ## Start the local Dagster UI (http://127.0.0.1:3000)
 	mkdir -p .dagster && touch .dagster/dagster.yaml
