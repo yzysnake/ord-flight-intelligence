@@ -42,7 +42,7 @@ To use the environment in PyCharm: *Settings → Project → Python Interpreter 
 | `src/ordfi/` | Python package: `ingest`, `timeutil`, `features`, `models`, `serving`, `quality` |
 | `tests/` | `unit/`, `property/` (point-in-time invariants), `integration/` |
 | `dbt/` | SQL transformations (staging → core → marts) |
-| `pipelines/` | Orchestration definitions (tool chosen in ADR-0003) |
+| `pipelines/` | Dagster code location: assets, partitions, schedules, sensors (ADR-0003) |
 | `notebooks/` | Numbered exploratory notebooks (outputs stripped) |
 | `apps/` | Public web app, static analytics site, internal dashboards |
 | `docs/research/` | Research and feasibility study |

@@ -1,6 +1,6 @@
 # ADR-0003: Orchestration
 
-- **Status:** Proposed
+- **Status:** Accepted (PR #1)
 - **Date:** 2026-10-26
 
 ## Context

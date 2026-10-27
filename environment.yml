@@ -2,8 +2,8 @@
 # Source of truth for dependencies; conda-lock.yml pins exact builds (regenerate with `make lock`).
 # conda-forge only: avoids Anaconda's `defaults` channel and its terms-of-service requirements.
 #
-# Deferred until the matching decision/phase (see docs/research, §7 and §11):
-#   orchestration (Dagster or Prefect)  -> ADR-0003
+# Decisions: storage/transformation in docs/adr/0002, orchestration in docs/adr/0003.
+# Deferred until the matching phase (see docs/research, §7 and §11):
 #   serving (FastAPI, uvicorn), Streamlit dashboards  -> Phase 2
 #   weather grids (xarray, cfgrib, herbie-data), MLflow  -> Phase 1b
 name: ordfi
@@ -19,13 +19,18 @@ dependencies:
   - pyarrow>=17
   - pandas>=2.2
   - polars>=1.0
-  - dbt-core>=1.9
-  - dbt-duckdb>=1.9
+  - dbt-core>=1.9,<2      # dbt Core v1 line (ADR-0002)
+  - dbt-duckdb>=1.9,<2
   - httpx>=0.27
   - tenacity
   - pydantic>=2.7
   - python-dotenv
   - pyyaml
+
+  # Orchestration (ADR-0003); dagster-dbt versions in lockstep with dagster
+  - dagster>=1.13
+  - dagster-webserver>=1.13
+  - dagster-dbt
 
   # Modeling
   - scikit-learn>=1.5
