@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- IEM weather backfill (`ordfi.ingest.iem`) for ORD, monthly from 2000, polite (1 request/s) and resumable:
+  - METARs: routine, specials and 5-minute HFMETAR, fetched separately because IEM's CSV has no report-type column.
+  - TAFs: IEM's parsed groups, its product overview and the verbatim bulletins.
+  - Staged yearly tables for METARs, TAF products and TAF groups. Known IEM TAF faults are flagged (`old_format`, `window_valid`), not silently used.
+  - `make ingest-iem`.
 - FAA ATCSCC advisory crawler (`ordfi.ingest.atcscc`): daily listings (every advisory) plus full texts of ORD-related advisories; polite (1 request/s), resumable crawl into the raw zone partitioned by advisory date; staged `index` and `advisories` tables with categories and typed program fields; `make ingest-atcscc`. Raw-zone `commit_download` gains `partition` and in-memory `index` options.
 - Live collector (`ordfi.collector`): an asyncio service archiving FAA NAS Status (XML and airport events), ORD D-ATIS and CBP T5 wait times.
   - Every content change goes to daily `snapshots.jsonl`; every poll goes to `polls.jsonl`.
