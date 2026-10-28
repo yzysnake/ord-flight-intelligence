@@ -15,8 +15,8 @@ second):
 Raw responses are stored verbatim, partitioned by data month. Past months are fetched once; the
 current month and months that ended less than ``REFRESH_DAYS`` ago are re-fetched.
 
-IEM's TAF parse has known faults, flagged rather than repaired in staging (the bulletins allow a
-re-parse):
+IEM's TAF parse has known faults. They are flagged in its staged tables, and
+``ordfi.ingest.taf`` re-parses the bulletins instead (``bulletins`` and ``periods`` tables):
 
 - ``old_format``: TAFs in the format used before November 2008 (``FMhhmm`` groups without a day,
   ``DDhhhh`` validity), detected from the group text. IEM gives them no validity window, and
@@ -43,6 +43,7 @@ import polars as pl
 
 from ordfi.ingest.http import download, make_client, sweep_partial_downloads
 from ordfi.ingest.raw import LicenceClass, RawRecord, commit_download, load_latest
+from ordfi.ingest.taf import stage_year as stage_taf_bulletins
 from ordfi.settings import data_dir
 
 METAR_SOURCE = "iem_asos_metar"
@@ -389,7 +390,7 @@ def stage_taf_year(
 ) -> tuple[Path, Path, dict[str, int]]:
     """TAF products and groups for one station-year, with ``old_format`` and ``window_valid``.
 
-    Bulletins stay in the raw zone until a parser of our own replaces IEM's.
+    Prefer the ``periods`` table from ``ordfi.ingest.taf``, which parses the bulletins.
     """
     index = load_latest(data_root, TAF_SOURCE)
     products: list[pl.DataFrame] = []
@@ -465,8 +466,10 @@ def main(argv: list[str] | None = None) -> None:
                 _, metar = stage_metar_year(root, year, args.station)
                 print(f"{year}: staged metar {metar}", flush=True)
             if "taf" in products:
-                *_, taf = stage_taf_year(root, year, args.station)
-                print(f"{year}: staged taf {taf}", flush=True)
+                *_, summary = stage_taf_year(root, year, args.station)
+                print(f"{year}: staged taf {summary}", flush=True)
+                *_, summary = stage_taf_bulletins(root, year, args.station)
+                print(f"{year}: parsed taf bulletins {summary}", flush=True)
         except Exception as exc:  # report and continue with the next year
             print(f"{year}: STAGE FAILED: {type(exc).__name__}: {exc}", flush=True)
 

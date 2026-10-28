@@ -33,9 +33,7 @@ by_hour as (
         max(wind_gust_kt) as max_wind_gust_kt,
         min(visibility_mi) as min_visibility_mi,
         min(ceiling_ft) as min_ceiling_ft,
-        case max(case flight_category
-                when 'LIFR' then 4 when 'IFR' then 3 when 'MVFR' then 2 when 'VFR' then 1
-            end)
+        case max({{ flight_category_rank('flight_category') }})
             when 4 then 'LIFR' when 3 then 'IFR' when 2 then 'MVFR' when 1 then 'VFR'
         end as worst_flight_category,
         bool_or(has_thunder) as any_thunder,

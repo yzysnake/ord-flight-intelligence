@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- TAF bulletin parser (`ordfi.ingest.taf`), run by `make ingest-iem`. It reads the verbatim bulletins in current and pre-2008 formats into `bulletins` and `periods` stage tables. It repairs IEM's misdated or missing windows and covers TAFs missing from IEM's tables. Validated against IEM and against observed weather (see the `iem_taf` card).
+- dbt model `taf_hourly`: every ORD TAF expanded to hourly prevailing forecasts and TEMPO/PROB overlays, with flight categories, 2000 →.
 - dbt model `aircraft_rotation`: every flown leg of an aircraft on the days it touches ORD (national, 10.6 M legs), in the order the aircraft flew them. Each leg links to the previous one (including the previous evening) and carries scheduled and actual ground times and station continuity. Tests check the chain's coherence and the link to `flight_leg`.
 - Ephemeral dbt model `int_bts_legs`: the national BTS union, flight key and tail cleaning shared by `flight_leg` and `aircraft_rotation`.
 - First EDA notebook (`notebooks/01_ord_delays_overview.ipynb`) on the core tables. It covers coverage changes, the yearly trend, season × hour of day, ORD weather, FAA programs, inbound-aircraft delay and carriers, with a table beside every chart.
@@ -54,6 +56,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Flight-category logic is a shared dbt macro, used by `weather_obs`, `weather_obs_hourly` and `taf_hourly`.
 - `flight_leg` reads from `int_bts_legs`. Tail numbers are upper-cased, and placeholders shorter than 4 characters become null.
 - dbt core outputs use zstd compression (about a third smaller).
 - Ruff allows the en dash and apostrophe in strings, for chart labels.
