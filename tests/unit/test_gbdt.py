@@ -7,9 +7,17 @@ import polars as pl
 import pytest
 
 from ordfi.features import build
-from ordfi.features.spines import hours
+from ordfi.features.spines import days, hours
 from ordfi.models.backtest import add_months
-from ordfi.models.gbdt import GBDT, OUTLOOK_FEATURES, encode, outlook, recalibration, split
+from ordfi.models.gbdt import (
+    DAY_FEATURES,
+    GBDT,
+    OUTLOOK_FEATURES,
+    encode,
+    outlook,
+    recalibration,
+    split,
+)
 from ordfi.models.metrics import brier
 from tests.feature_tables import tables
 
@@ -102,3 +110,15 @@ def test_the_outlook_reads_every_feature_of_the_hours_spine() -> None:
     assert produced == set(OUTLOOK_FEATURES) and len(OUTLOOK_FEATURES) == len(produced)
     schedule = outlook("s", ("cal_", "dem_")).columns()
     assert schedule == {f for f in OUTLOOK_FEATURES if f.startswith(("cal_", "dem_"))}
+
+
+def test_the_daily_outlook_reads_every_feature_of_the_days_spine() -> None:
+    day = date(2019, 7, 16)
+    frame = build.build("days", days(day, day + timedelta(days=1), ["d1_1900"]),
+                        tables(date(2019, 7, 15)))  # fmt: skip
+    keys = {"target_date", "target_utc", "target_end_utc", "horizon", "as_of", "licence_class"}
+    produced = {c for c in frame.columns if c not in keys and not c.startswith("y_")}
+    assert produced == set(DAY_FEATURES) and len(DAY_FEATURES) == len(produced)
+    daily = outlook("d", spine="days")
+    assert daily.columns() == set(DAY_FEATURES) and daily.validation_months == 24
+    assert outlook("h").validation_months == 12
