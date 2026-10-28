@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Alerts and recalibration from the track record (`ordfi.models.recent`).
+  - For each test month, the outlook tasks reset their alert threshold on the last 12 months with published outcomes. The threshold is the lowest forecast that flagged at most 10 % of the normal days or hours. The backtest forecasts the 14 months before the first test month for the record, without scoring them.
+  - `gbdt_recent` is the GBDT shifted to the record's level. It is scored but not adopted: on the development months every variant lost skill.
+  - Results: the evening-before bad-day alert catches 77 % of bad days at 1.19 false alarms per 10 normal days. False alarms held at 9.3 % on the development months, but at 13.7 % in the stormier reported months.
 - Daily outlook tasks (`day_bad60`, `day_gdp`, `day_ground_stop`): a bad day, a GDP day and a ground-stop day, scored at the days spine's five issue times.
   - Baselines: a month-by-weekday climatology (the skill reference), persistence of the previous 24 hours and announced programs.
   - Models: the Outlook GBDT on the 67 day features, with 24 held-out months (chosen on the development months) and ablations.

@@ -8,9 +8,14 @@ climatology and intervals from resampling whole days. Test months are independen
 folds can be fitted in parallel worker processes (``workers``). Not threads: LightGBM keeps its
 thread count in process-wide state, and boosters trained in concurrent threads corrupt memory.
 
+The outlook tasks also keep a track record (ordfi.models.recent): the months before the first
+test month are forecast too, so that each test month's alerts can take their threshold from
+the forecasts and outcomes of the year before it, and the GBDT's forecasts can be recalibrated
+on them (``gbdt_recent``).
+
 ``python -m ordfi.models.backtest --task dep_late15 --from 2024-09 --to 2026-08`` writes
 ``backtests/<task>/<run>/``: ``predictions.parquet``, ``metrics.parquet``,
-``reliability.parquet`` and ``run.json``.
+``reliability.parquet``, ``alerts.parquet`` (outlook tasks) and ``run.json``.
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ from typing import Any
 import polars as pl
 
 from ordfi.features.spines import horizons
-from ordfi.models import baselines, gbdt
+from ordfi.models import baselines, gbdt, recent
 from ordfi.models.baselines import LABEL, Model
 from ordfi.models.metrics import reliability, scores, skill
 from ordfi.settings import data_dir
@@ -46,6 +51,11 @@ BAD_HOUR_MIN_DEPARTURES = 10
 # A "bad day" on the same cut: the top decile of days in 2015 – Aug 2024 (COVID left out).
 BAD_DAY_SHARE = 0.2
 BAD_DAY_MIN_DEPARTURES = 100
+# Months of track record behind each test month's alerts and recalibration, ending at the last
+# month with published outcomes (chosen on the development months: docs/backtests/).
+TRACK_RECORD = 12
+RECORD_LAG = LABEL_LAG + 1
+RECALIBRATED = ("gbdt",)  # models also scored recalibrated on their track record
 
 
 @dataclass(frozen=True)
@@ -56,6 +66,7 @@ class Task:
     models: Callable[[], list[Model]]
     rows: pl.Expr = field(default_factory=lambda: pl.lit(True))  # spine rows scored
     description: str = ""
+    track_record: bool = False  # alerts and recalibration from each month's track record
 
 
 def _late(minutes: int) -> pl.Expr:
@@ -101,25 +112,28 @@ TASKS = {
              lambda: _hour_models(baselines.persistence()),
              rows=pl.col("y_n_departures") >= BAD_HOUR_MIN_DEPARTURES,
              description="20 %+ of an hour's ORD departures leave 60+ min late or are cancelled "
-                         "(hours with 10+ departures; T1)"),
+                         "(hours with 10+ departures; T1)", track_record=True),
         Task("hour_gdp", "hours", pl.col("y_gdp"),
              lambda: _hour_models(baselines.announced("gdp")),
-             description="A general ORD GDP is in effect during the hour (T1)"),
+             description="A general ORD GDP is in effect during the hour (T1)",
+             track_record=True),
         Task("hour_ground_stop", "hours", pl.col("y_ground_stop"),
              lambda: _hour_models(baselines.announced("gs")),
-             description="A general ORD ground stop is in effect during the hour (T1)"),
+             description="A general ORD ground stop is in effect during the hour (T1)",
+             track_record=True),
         Task("day_bad60", "days", pl.col("y_late60_share") >= BAD_DAY_SHARE,
              lambda: _day_models(baselines.day_persistence()),
              rows=pl.col("y_n_departures") >= BAD_DAY_MIN_DEPARTURES,
              description="A bad day: 20 %+ of a local day's ORD departures leave 60+ min late or "
-                         "are cancelled (T1)"),
+                         "are cancelled (T1)", track_record=True),
         Task("day_gdp", "days", pl.col("y_gdp"),
              lambda: _day_models(baselines.announced("gdp")),
-             description="A general ORD GDP is in effect at some time in the local day (T1)"),
+             description="A general ORD GDP is in effect at some time in the local day (T1)",
+             track_record=True),
         Task("day_ground_stop", "days", pl.col("y_ground_stop"),
              lambda: _day_models(baselines.announced("gs")),
              description="A general ORD ground stop is in effect at some time in the local day "
-                         "(T1)"),
+                         "(T1)", track_record=True),
     )
 }  # fmt: skip
 
@@ -305,20 +319,35 @@ def run(task_name: str, horizons: list[str], test_months: list[date], root: Path
         run_name: str | None = None, models: Sequence[str] | None = None,
         workers: int = 1) -> Path:  # fmt: skip
     """Backtest one task (the ``models`` named, default all) and write its outputs; returns the
-    run directory."""
+    run directory. Outlook tasks also forecast the months before ``test_months`` that their
+    track record needs; only ``test_months`` are scored."""
     task = TASKS[task_name]
     began = time.monotonic()
-    predictions = predict(task, horizons, test_months, root, models_for(task, models), workers)
-    metrics, bins = evaluate(predictions, day_flags(root / "core"), _key(task))
+    chosen = models_for(task, models)
+    record = recent.warm_up(test_months[0], TRACK_RECORD, RECORD_LAG) if task.track_record else []
+    predictions = predict(task, horizons, record + test_months, root, chosen, workers)
+    if task.track_record:
+        names = [m.name for m in chosen if m.name in RECALIBRATED]
+        recalibrated = recent.recalibrate(predictions, names, test_months, TRACK_RECORD,
+                                          RECORD_LAG)  # fmt: skip
+        predictions = pl.concat([predictions, recalibrated])
+    scored = predictions.filter(pl.col("test_month").is_in(test_months))
+    metrics, bins = evaluate(scored, day_flags(root / "core"), _key(task))
     name = run_name or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out = root / "backtests" / task.name / name
     out.mkdir(parents=True, exist_ok=True)
     predictions.write_parquet(out / "predictions.parquet", compression="zstd")
     metrics.write_parquet(out / "metrics.parquet")
     bins.write_parquet(out / "reliability.parquet")
+    if task.track_record:
+        own = predictions.filter(~pl.col("model").str.ends_with(recent.SUFFIX))
+        recent.alerts(own, test_months, TRACK_RECORD, RECORD_LAG).write_parquet(
+            out / "alerts.parquet"
+        )
     (out / "run.json").write_text(json.dumps({
         "task": task.name, "description": task.description, "spine": task.spine,
         "horizons": horizons, "test_months": [m.isoformat() for m in test_months],
+        "track_record_months": [m.isoformat() for m in record],
         "label_lag_months": LABEL_LAG,
         "excluded_from_training": {"from": f"{EXCLUDED[0]:%Y-%m}", "to": f"{EXCLUDED[1]:%Y-%m}"},
         "reference": REFERENCE, "models": sorted(predictions["model"].unique().to_list()),
@@ -336,6 +365,16 @@ def summary(metrics: pl.DataFrame) -> pl.DataFrame:
         .alias("bss_95ci"),
         "roc_auc", "ece",
     ).with_columns(pl.col("base_rate", "brier", "roc_auc", "ece").round(3))  # fmt: skip
+
+
+def alert_summary(alerts: pl.DataFrame) -> pl.DataFrame:
+    """The alerts, one row per horizon and model: the share of events flagged, false alarms per
+    10 non-events and the share of flags that were events."""
+    return alerts.select(
+        "horizon", "model", "events", "flags", pl.col("hit_rate").round(3),
+        (10 * pl.col("false_alarm_rate")).round(2).alias("false_alarms_per_10"),
+        pl.col("precision").round(3),
+    ).sort("horizon", "model")  # fmt: skip
 
 
 def default_workers(task: Task) -> int:
@@ -390,6 +429,9 @@ def main(argv: list[str] | None = None) -> None:
             out = run(name, chosen[name], months, data_dir(), args.run, wanted, workers)
             print(f"{name}: {TASKS[name].description}\n  -> {out}", flush=True)
             print(summary(pl.read_parquet(out / "metrics.parquet")), flush=True)
+            alerts = out / "alerts.parquet"
+            if alerts.is_file() and not (found := pl.read_parquet(alerts)).is_empty():
+                print(alert_summary(found), flush=True)
 
 
 if __name__ == "__main__":
