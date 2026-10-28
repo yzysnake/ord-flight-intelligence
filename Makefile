@@ -59,7 +59,7 @@ dbt-build: ## Build and test the dbt core models (Parquet in data/core): SELECT=
 	mkdir -p $(ORDFI_DATA_DIR)/core $(ORDFI_DATA_DIR)/warehouse
 	$(DBT) build --project-dir dbt --profiles-dir dbt $(if $(SELECT),--select $(SELECT))
 
-features: ## Build as-of feature snapshots from data/core: SPINE=departures|hours FROM=2019-01 TO=2019-12 (HORIZONS=24h,6h,...)
+features: ## Build as-of feature snapshots from data/core: SPINE=departures|hours|days FROM=2019-01 TO=2019-12 (HORIZONS=24h,6h,... or d1_1900,...)
 	ORDFI_DATA_DIR=$(ORDFI_DATA_DIR) $(RUN) python -m ordfi.features --spine $(or $(SPINE),departures) \
 		--from $(FROM) --to $(TO) $(if $(HORIZONS),--horizons $(HORIZONS))
 

@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Days spine (`make features SPINE=days`): one row per local ORD day, for the daily outlook, issued at fixed local times.
+  - Issues: 19:00 three and two days before, 07:00 and 19:00 the day before, and 05:00 on the day, timed around the TAFs that reach the day.
+  - Day groups: the TAF summed over the day's hours, programs announced to cover any part of the day, the last 24 hours of operations (the previous day's state), and the day's scheduled demand and busiest hour.
+  - Labels: the day's shares of departures late or cancelled, and whether a GDP or ground stop ran.
+  - The leakage property test covers the spine, checking every issue of 60 worlds. Real data shows no mismatch in 605 day rows.
 - Outlook GBDT (`ordfi.models.gbdt`): a LightGBM classifier per hourly task and horizon, on all 59 features of the hours spine.
   - Fitting: the last 12 training months, after a one-day embargo, pick the number of trees by early stopping; the trees are then refit on the whole window, and a Platt recalibration fitted on the held-out months sets the level.
   - Settings were frozen on development months (Sep 2022 – Aug 2024) before the reported run.

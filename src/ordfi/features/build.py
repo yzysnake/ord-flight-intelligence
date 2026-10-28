@@ -2,9 +2,9 @@
 
 ``python -m ordfi.features --spine departures --from 2019-01 --to 2019-12`` writes
 ``features/<spine>/horizon=<h>/<yyyy-mm>.parquet`` under the data directory. Each row is a
-spine row (a flight or an hour, at a horizon) with its features, known at ``as_of``, and its
-``y_`` labels. Live scoring is meant to call ``features`` on the same tables with
-``as_of = now``.
+spine row (a flight, an hour or a local day, at a horizon or issue time) with its features,
+known at ``as_of``, and its ``y_`` labels. Live scoring is meant to call ``features`` on the
+same tables with ``as_of = now``.
 """
 
 from __future__ import annotations
@@ -20,12 +20,15 @@ import polars as pl
 from ordfi.features import groups
 from ordfi.features.knowledge import LEG_COLUMNS, SCHEDULE_LEAD, Tables
 from ordfi.features.spines import (
-    HORIZONS,
     SPINES,
+    day_labels,
+    days,
     departure_labels,
     departures,
+    horizons,
     hour_labels,
     hours,
+    max_lead,
 )
 from ordfi.settings import data_dir
 
@@ -38,12 +41,17 @@ GROUPS: dict[str, list[groups.Group]] = {
         groups.calendar, groups.weather, groups.taf, groups.programs, groups.operations,
         groups.demand,
     ],
+    "days": [
+        groups.day_calendar, groups.weather, groups.day_taf, groups.day_programs,
+        groups.operations, groups.previous_day, groups.day_demand,
+    ],
 }  # fmt: skip
-LABELS = {"departures": departure_labels, "hours": hour_labels}
+LABELS = {"departures": departure_labels, "hours": hour_labels, "days": day_labels}
 LICENCE = "public-domain"  # every input is public domain
 
-# Demand and inbound features take the schedules around the target as known at as_of.
-assert max(HORIZONS.values()) + timedelta(days=1) <= SCHEDULE_LEAD
+# Demand and inbound features take the schedules around the target, to the end of a target day,
+# as known at as_of.
+assert all(max_lead(spine) + timedelta(days=2) <= SCHEDULE_LEAD for spine in SPINES)
 
 
 def features(spine_name: str, spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
@@ -66,9 +74,10 @@ def build(spine_name: str, spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
     )
 
 
-def load(core: Path, start: datetime, end: datetime) -> Tables:
-    """The core tables for targets in [start, end), with the history before them."""
-    before = start - max(HORIZONS.values()) - timedelta(days=2)
+def load(core: Path, start: datetime, end: datetime, lead: timedelta) -> Tables:
+    """The core tables for targets in [start, end) (a local day may run 6 hours past ``end``)
+    and the history before them, for forecasts made up to ``lead`` ahead."""
+    before = start - lead - timedelta(days=2)
     after = end + timedelta(days=1)
 
     def scan(name: str) -> pl.LazyFrame:
@@ -86,7 +95,7 @@ def load(core: Path, start: datetime, end: datetime) -> Tables:
         & (pl.coalesce("end_utc", pl.col("start_utc") + timedelta(days=1)) > before)
     )
     programs = scan("atc_program_interval").filter(
-        (pl.col("end_utc") > start - timedelta(hours=1)) & (pl.col("start_utc") < end)
+        (pl.col("end_utc") > start - timedelta(hours=1)) & (pl.col("start_utc") < after)
     )
     legs = scan("flight_leg").filter(
         pl.col("sched_dep_utc").is_between(before - timedelta(days=1), after, closed="left")
@@ -103,8 +112,11 @@ def load(core: Path, start: datetime, end: datetime) -> Tables:
 
 def spine_for(spine_name: str, tables: Tables, start: datetime, end: datetime,
               horizons: list[str]) -> pl.DataFrame:  # fmt: skip
+    """The spine's rows for targets in [start, end): local dates of that range for days."""
     if spine_name == "departures":
         return departures(tables.legs, start, end, horizons)
+    if spine_name == "days":
+        return days(start.date(), end.date(), horizons)
     return hours(start, end, horizons)
 
 
@@ -122,7 +134,7 @@ def run(spine_name: str, first: date, last: date, horizons: list[str], root: Pat
         began = time.monotonic()
         start = datetime(month.year, month.month, 1, tzinfo=UTC)
         end = (start + timedelta(days=32)).replace(day=1)
-        tables = load(root / "core", start, end)
+        tables = load(root / "core", start, end, max_lead(spine_name))
         frame = build(spine_name, spine_for(spine_name, tables, start, end, horizons), tables)
         for (horizon,), part in frame.partition_by("horizon", as_dict=True).items():
             target = out_dir / f"horizon={horizon}" / f"{month:%Y-%m}.parquet"
@@ -142,8 +154,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--spine", choices=SPINES, default="departures")
     parser.add_argument("--from", dest="first", required=True, help="YYYY-MM")
     parser.add_argument("--to", dest="last", required=True, help="YYYY-MM")
-    parser.add_argument("--horizons", default=",".join(HORIZONS), help="e.g. 24h,6h,1h")
+    parser.add_argument("--horizons", help="e.g. 24h,6h,1h, or d1_1900 for days "
+                                           "(default: all of the spine's)")  # fmt: skip
     args = parser.parse_args(argv)
     first = date.fromisoformat(f"{args.first}-01")
     last = date.fromisoformat(f"{args.last}-01")
-    run(args.spine, first, last, args.horizons.split(","), data_dir())
+    chosen = horizons(args.spine) if args.horizons is None else args.horizons.split(",")
+    run(args.spine, first, last, chosen, data_dir())
