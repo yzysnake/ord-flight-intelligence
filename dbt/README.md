@@ -41,5 +41,4 @@ Every model carries `known_time` (when its content became available) and `licenc
 ## Next
 
 - A latest-forecast-as-of model on `taf_hourly`; NBM and LAMP guidance.
-- An as-of feature builder (programs, forecasts, rotations) with a no-leakage test.
 - Dagster assets through `dagster-dbt` (ADR-0003).

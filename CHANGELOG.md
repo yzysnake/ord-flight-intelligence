@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- As-of feature builder (`ordfi.features`, `make features`): point-in-time snapshots for every scheduled ORD departure and every hour at the 24 h, 6 h, 3 h, 1 h and 15 min horizons, 2015 →.
+  - Feature groups: calendar, METAR, TAF, ATC programs, recent ORD operations, scheduled demand, and the flight and its inbound aircraft. Labels are kept separate.
+  - Knowledge-time rules live in one module, with a `visible(tables, as_of)` view.
+  - A property test checks that no feature changes when unknown inputs are removed, and it catches injected leaks. The same check on real months finds no mismatch (see `docs/features/`).
 - dbt models `atc_program_interval` and `atc_program_interval_version`: ORD's GDP and ground-stop advisories chained into 5,333 programs (2001 →). Each has its start, its end after revisions and cancellations, how it ended and its scope (general, carrier-only, CAT I/II). Versions give each program as known after each advisory, for point-in-time use. Validated against flights to ORD (see the ATCSCC card).
 - TAF bulletin parser (`ordfi.ingest.taf`), run by `make ingest-iem`. It reads the verbatim bulletins in current and pre-2008 formats into `bulletins` and `periods` stage tables. It repairs IEM's misdated or missing windows and covers TAFs missing from IEM's tables. Validated against IEM and against observed weather (see the `iem_taf` card).
 - dbt model `taf_hourly`: every ORD TAF expanded to hourly prevailing forecasts and TEMPO/PROB overlays, with flight categories, 2000 →.
