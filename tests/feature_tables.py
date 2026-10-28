@@ -42,7 +42,7 @@ NBM = {
 VERSIONS = {
     "program_id": pl.String(), "airport": pl.String(), "program_type": pl.String(),
     "scope": pl.String(), "version": pl.Int64(), "start_utc": UTC_TS, "end_utc": UTC_TS,
-    "known_time": UTC_TS, "valid_to": UTC_TS,
+    "reason": pl.String(), "known_time": UTC_TS, "valid_to": UTC_TS,
 }  # fmt: skip
 PROGRAMS = {
     "airport": pl.String(), "program_type": pl.String(), "scope": pl.String(),

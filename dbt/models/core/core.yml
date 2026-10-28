@@ -245,6 +245,11 @@ models:
         data_tests: [not_null]
       - name: end_utc
         description: The end as then stated; at a cancellation, when it took effect.
+      - name: reason
+        description: >
+          The cause this version's advisory states (its IMPACTING CONDITION or REASON field),
+          e.g. 'WEATHER / THUNDERSTORMS' or 'STAFFING / STAFFING'. Null when it states none, as
+          most cancellations and updates do.
       - name: known_time
         description: The advisory's send time.
         data_tests: [not_null]

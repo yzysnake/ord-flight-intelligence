@@ -85,7 +85,8 @@ def test_a_run_never_learns_from_months_it_could_not_have_seen(
     assert predictions["p"].max() == 0.0
     assert set(predictions["model"]) == {
         "base_rate", "calendar", "announced", "gbdt_schedule", "gbdt", "gbdt_no_taf",
-        "gbdt_no_guidance", "gbdt_no_atc", "gbdt_no_climate", "gbdt_no_ops", "gbdt_recent",
+        "gbdt_no_guidance", "gbdt_no_atc", "gbdt_no_climate", "gbdt_no_staffing", "gbdt_no_ops",
+        "gbdt_recent",
     }  # fmt: skip
     metrics = pl.read_parquet(out / "metrics.parquet")
     assert set(metrics["slice"]) == set(backtest.SLICES)

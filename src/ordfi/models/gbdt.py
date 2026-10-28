@@ -43,10 +43,12 @@ FALLBACK_ROUNDS = 100  # when the window is too short to hold months out
 EMBARGO = timedelta(days=1)  # left out between the fitted and the held-out months
 FLIGHT_CATEGORY_RANK = {"LIFR": 0, "IFR": 1, "MVFR": 2, "VFR": 3}
 
-# How often ORD has had programs lately, from the advisories known at as_of (both spines).
+# How often ORD has had programs lately, from the advisories known at as_of (both spines), and
+# how often for staffing.
 PROGRAM_CLIMATE = (
     "atc_gdp_days_7d", "atc_gdp_days_30d", "atc_gs_days_7d", "atc_gs_days_30d",
 )  # fmt: skip
+STAFFING_DAYS = ("atc_staffing_days_7d", "atc_staffing_days_30d")
 # Station guidance for the target hour or day, the same on both outlook spines.
 GUIDANCE_FEATURES = (
     "mos_projections", "mos_flight_category", "mos_ceiling_category", "mos_visibility_category",
@@ -70,7 +72,7 @@ OUTLOOK_FEATURES = (
     *GUIDANCE_FEATURES,
     "atc_gdp_now", "atc_gdp_since_start_min", "atc_gdp_to_end_min", "atc_gdp_at_target",
     "atc_gs_now", "atc_gs_since_start_min", "atc_gs_to_end_min", "atc_gs_at_target",
-    "atc_gdp_issued_24h", "atc_gs_issued_24h", *PROGRAM_CLIMATE,
+    "atc_gdp_issued_24h", "atc_gs_issued_24h", *PROGRAM_CLIMATE, *STAFFING_DAYS,
     "ops_dep_1h_n", "ops_dep_1h_delay_mean", "ops_dep_1h_late15_share", "ops_dep_3h_n",
     "ops_dep_3h_delay_mean", "ops_dep_3h_late15_share", "ops_arr_1h_n", "ops_arr_1h_delay_mean",
     "ops_arr_1h_late15_share", "ops_arr_3h_n", "ops_arr_3h_delay_mean", "ops_arr_3h_late15_share",
@@ -91,7 +93,7 @@ DAY_FEATURES = (
     *GUIDANCE_FEATURES,
     "atc_gdp_now", "atc_gdp_since_start_min", "atc_gdp_to_end_min", "atc_gdp_at_target",
     "atc_gs_now", "atc_gs_since_start_min", "atc_gs_to_end_min", "atc_gs_at_target",
-    "atc_gdp_issued_24h", "atc_gs_issued_24h", *PROGRAM_CLIMATE,
+    "atc_gdp_issued_24h", "atc_gs_issued_24h", *PROGRAM_CLIMATE, *STAFFING_DAYS,
     "ops_dep_1h_n", "ops_dep_1h_delay_mean", "ops_dep_1h_late15_share", "ops_dep_3h_n",
     "ops_dep_3h_delay_mean", "ops_dep_3h_late15_share", "ops_arr_1h_n", "ops_arr_1h_delay_mean",
     "ops_arr_1h_late15_share", "ops_arr_3h_n", "ops_arr_3h_delay_mean", "ops_arr_3h_late15_share",
