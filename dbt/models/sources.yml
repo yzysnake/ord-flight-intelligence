@@ -34,3 +34,11 @@ sources:
         description: Prevailing and overlay (TEMPO/PROB) forecast periods of each TAF bulletin.
         meta:
           external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/iem_taf/periods/*/*/data.parquet')"
+      - name: iem_mos_gfs
+        description: GFS MOS (MAV) station guidance from IEM's MOS archive (ordfi.ingest.mos), one file per station-year.
+        meta:
+          external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/iem_mos/gfs/*/*/data.parquet')"
+      - name: iem_mos_nbs
+        description: NBM short-range (NBS) station guidance from IEM's MOS archive (ordfi.ingest.mos), one file per station-year.
+        meta:
+          external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/iem_mos/nbs/*/*/data.parquet')"

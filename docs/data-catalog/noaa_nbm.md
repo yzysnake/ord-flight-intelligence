@@ -16,5 +16,17 @@
 
 ## Ingestion notes
 
+- **History in use:** IEM's copy of the NBS bulletin (`iem_mos` card), 2018-11-08 onwards, ingested by `ordfi.ingest.mos` into the dbt model `nbm`. IEM keeps 4 cycles per day (01, 07, 13, 19Z), so the hourly cycles and the NBH bulletin still need the AWS archive (from 2020-05-18).
+- **The codes changed with NBM's versions.** Each was established by comparing the raw values with ORD's METARs:
+  - Visibility is in whole miles before the 2020-02-20 12Z cycle (no run before it exceeds 34) and in tenths after (99.9 % of runs reach 100 or more). The cap at 10 miles (100) only arrives with v4.0.
+  - `999` means no visibility forecast; under v3 that is beyond about 36 h.
+  - An unlimited ceiling is `888` before v4.0 (last on 2020-09-29) and `-88` after.
+  - The IFR ceiling and visibility probabilities (`IFC`, `IFV`) start with v4.0.
+  - Thunder comes as 3-hour probabilities (`T03`) throughout; 6- and 12-hour ones are rare.
+- **Validation** (dbt `nbm`, leads up to 12 h, against the METAR at the valid hour):
+  - The flight category agrees 84.6 % of the time (GFS MOS: 83.2 %).
+  - Forecast IFR hours were IFR or worse 53 % of the time, forecast LIFR hours 76 %.
+  - The 3-hour thunder probabilities are reliable up to about 25 % and too low above: 33 % forecasts verified 45 % of the time.
+
 - Prefer NBH (hourly) and NBS (short-range) text bulletins for station features.
 - Use GRIB2 only for spatial features (route corridors), via byte-range reads from the `.idx` files.

@@ -45,6 +45,7 @@ Backfill FAA traffic-management advisories and IEM weather, then build the core 
 ```bash
 make ingest-atcscc  # ATCSCC advisories, 2001 →
 make ingest-iem     # ORD METAR and TAF, 2000 →
+make ingest-mos     # ORD GFS MOS (2014-12 →) and NBM (2018-11 →) station guidance
 make dbt-build      # calendar, flight_leg, weather_obs(_hourly), atc_program → data/core
 ```
 

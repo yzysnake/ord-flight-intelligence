@@ -282,3 +282,71 @@ models:
         description: The worst category the TAF allows for the hour, TEMPO and PROB groups included.
       - name: prob_pct
         description: Highest PROB group (30 or 40) touching the hour.
+  - name: gfs_mos
+    description: >
+      GFS MOS (MAV) station guidance for ORD from IEM's archive (2014-12 →): one row per run
+      (00, 06, 12, 18Z) and 3-hourly projection, 6 to 72 h ahead, with the MAV card's ceiling
+      and visibility categories and the flight category they imply. For the guidance as of time
+      t, keep rows with known_time <= t and the latest run per valid time.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [runtime, valid_time]
+    columns:
+      - name: known_time
+        description: The run time + 5 h (data-catalog card iem_mos).
+        data_tests: [not_null]
+      - name: valid_time
+        data_tests: [not_null]
+      - name: ceiling_category
+        description: "MAV ceiling category: 1 < 200 ft, 2 200-400, 3 500-900, 4 1000-1900, 5 2000-3000, 6 3100-6500, 7 6600-12000, 8 higher or unlimited."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 7, 8]
+      - name: visibility_category
+        description: "MAV visibility category: 1 < 1/2 mi, 2 1/2 to < 1, 3 1 to < 2, 4 2 to < 3, 5 3-5, 6 6, 7 more than 6."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 7]
+      - name: flight_category
+        description: The worse of the categories the ceiling and visibility imply.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [VFR, MVFR, IFR, LIFR]
+      - name: thunder_6h_pct
+        description: Probability of a thunderstorm in the 6 hours ending at valid_time.
+  - name: nbm
+    description: >
+      NBM short-range (NBS) station guidance for ORD from IEM's archive (2018-11 →): one row per
+      cycle (IEM keeps 01, 07, 13, 19Z) and 3-hourly projection to 72 h ahead. For the guidance
+      as of time t, keep rows with known_time <= t and the latest cycle per valid time.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [runtime, valid_time]
+    columns:
+      - name: known_time
+        description: The cycle time + 70 min (data-catalog card noaa_nbm).
+        data_tests: [not_null]
+      - name: valid_time
+        data_tests: [not_null]
+      - name: ceiling_ft
+        description: Ceiling height in feet; null when unlimited (888 before NBM v4.0, -88 after).
+      - name: visibility_mi
+        description: >
+          Visibility in miles, capped at 10 (10 or more). The bulletin gives whole miles before
+          the 2020-02-20 12Z cycle and tenths after; null when it gives none (999).
+      - name: flight_category
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [VFR, MVFR, IFR, LIFR]
+      - name: ifr_ceiling_pct
+        description: Probability of an IFR ceiling (below 1,000 ft); from NBM v4.0 (2020-09-29).
+      - name: ifr_visibility_pct
+        description: Probability of IFR visibility (below 3 miles); from NBM v4.0 (2020-09-29).
+      - name: thunder_3h_pct
+        description: Probability of thunder in the 3 hours ending at valid_time.

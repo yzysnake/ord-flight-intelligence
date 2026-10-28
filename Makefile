@@ -8,7 +8,7 @@ PYTHON     = $(shell conda run -n $(ENV_NAME) python -c "import sys; print(sys.e
 
 .DEFAULT_GOAL := help
 .PHONY: help env env-update lock install hooks lint format typecheck test check clean \
-        ingest-bts ingest-atcscc ingest-iem dbt-build features backtest dagster \
+        ingest-bts ingest-atcscc ingest-iem ingest-mos dbt-build features backtest dagster \
         collector-start collector-stop collector-status
 
 help: ## List available targets
@@ -54,6 +54,10 @@ ingest-atcscc: ## Crawl + stage ATCSCC advisories: FROM=2015-01-01 TO=2026-10-26
 
 ingest-iem: ## Fetch + stage IEM METAR/TAF for ORD: FROM=2015-01 TO=2026-10 (defaults: 2000-01 → this month)
 	$(RUN) python -m ordfi.ingest.iem $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO))
+
+ingest-mos: ## Fetch + stage GFS MOS and NBM guidance for ORD: MODEL=GFS|NBS FROM=2019-01 TO=2026-10 (defaults: all → this month)
+	$(RUN) python -m ordfi.ingest.mos $(if $(MODEL),--model $(MODEL)) $(if $(FROM),--from $(FROM)) \
+		$(if $(TO),--to $(TO))
 
 dbt-build: ## Build and test the dbt core models (Parquet in data/core): SELECT=flight_leg+ to limit
 	mkdir -p $(ORDFI_DATA_DIR)/core $(ORDFI_DATA_DIR)/warehouse
