@@ -47,6 +47,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- ATCSCC advisories in the older layouts, found during the 2001–2014 backfill:
+  - GDP periods before November 2006 are read from `ARRIVALS ESTIMATED FOR`, rates from `PROGRAM AAR` (to May 2004) and the element from `AIRPORT`. For 2001–2006 ORD GDPs, periods rise from 5 % to 95 % and rates from 46 % to 88 %.
+  - The `AIRPORT` element corrects the airport of 19 program advisories whose listing names another element (e.g. ORD GDPs listed as `ZAU/ORD`, Toronto programs listed under ORD).
+  - `atc_program` leaves implausible periods (a mistyped day such as `142056Z-182230Z`) null rather than reporting a four-day ground stop. Its test now checks that they stay rare.
 - BTS ingestion, found during the full backfill:
   - CSVs are decoded lossily (a corrupt source row in Aug 2018 failed the month); affected rows are counted as `rows_invalid_text`.
   - Time-zone override for `ISN` (Williston, ND; closed 2019); unresolved airport codes are now reported per month.

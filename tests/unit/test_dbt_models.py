@@ -133,12 +133,14 @@ def write_stage(root: Path) -> None:
         listed(july31, 5, "CDM GROUND STOP", "ground_stop", at(31, 23, 40)),
         listed(july31, 5, "CDM GROUND STOP", "ground_stop", at(31, 23, 41)),  # re-sent
         listed(august1, 2, "CDM GROUND DELAY PROGRAM", "gdp", at(1, 0, 10, month=8)),
+        listed(august1, 4, "ORD GROUND STOP", "ground_stop", at(1, 20, 59, month=8)),
     ], {**atcscc.INDEX_SCHEMA, "licence_class": pl.String()})  # fmt: skip
     write(root, "faa_atcscc_advisories/advisories/year=2019", [
         text(july15, 3, "14/2219Z - 15/0259Z"),
         text(july15, 7, "ETD 152030 TO 160100", "KORD KMDW"),
         text(july31, 5, "UNTIL 0100Z"),
         text(august1, 2, "31/2300Z - 01/0200Z"),
+        text(august1, 4, "142056Z-012230Z"),  # start day mistyped (14 for 01)
     ], {**atcscc.ADVISORY_SCHEMA, "licence_class": pl.String()})  # fmt: skip
     write_taf(root)
 
@@ -260,6 +262,7 @@ def test_atc_program_periods_resolve_across_days_and_months(core: Core) -> None:
         (date(2019, 7, 31), 5, "until", at(31, 23, 41), at(31, 23, 41), at(1, 1, 0, month=8), 130),
         (date(2019, 8, 1), 2, "dated", at(1, 0, 10, month=8), at(31, 23, 0), at(1, 2, 0, month=8),
          130),
+        (date(2019, 8, 1), 4, "dated", at(1, 20, 59, month=8), None, None, 130),  # implausible
     ]  # fmt: skip
 
 
