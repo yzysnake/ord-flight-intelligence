@@ -7,6 +7,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- The recent program climate in the GDP and ground-stop outlook: `atc_gdp_days_7d`, `atc_gdp_days_30d`, `atc_gs_days_7d` and `atc_gs_days_30d`, with the `gbdt_no_climate` ablation.
+  - The features count the local days among the last 7 and 30 with a GDP or a ground stop, from the advisories known at `as_of`. The leakage property test covers them (injected leaks caught 8 of 8 times), with no mismatches in 1,350 real rows.
+  - Why: the daily GDP and ground-stop forecasts ran low in the reported months (calibration errors 0.035–0.057). Programs came back in 2025–26, staffing programs among them, which the training years barely had.
+  - Three fixes were tried on two development windows, Sep 2018 – Feb 2020 (programs rising) and Sep 2022 – Aug 2024 (falling): the climate, training up to the month before, and shifts to a recent track record. Only the climate passed the rule fixed beforehand, narrowly. The bad-delay models leave it out.
+  - On Sep 2024 – Aug 2026, GDP days gain 0.009–0.021 in skill at every issue, with calibration errors of 0.047–0.054 (from 0.050–0.056). GDP hours at 24 h reach 0.186. Ground stops are mixed (−0.006 to +0.007).
+  - The daily level is still low (GDP days forecast at 9.5 % against 14.4 %). About half of the shortfall is days with staffing programs.
+  - Backtest tasks carry their label lag (`Task.label_lag`, in `run.json`).
 - Station guidance in the outlook (`mos_` and `nbm_` features on the hours and days spines, in the GBDT, with the `gbdt_no_guidance` ablation).
   - For the target hour or day, each projection comes from the latest GFS MOS or NBM run known. The features are the worst flight category, the lowest ceiling and visibility, the highest thunder, precipitation and precipitation-type probabilities, IFR probabilities, wind and gusts, plus coverage and age.
   - The leakage property test covers them (injected leaks caught 20 of 20 times), with no mismatches in 1,350 real rows.

@@ -42,7 +42,6 @@ from ordfi.models.metrics import reliability, scores, skill
 from ordfi.settings import data_dir
 
 LABEL_LAG = 2  # months between the last training month and the test month (BTS release lag)
-ADVISORY_LAG = 0  # labels from FAA advisories are known the day they happen
 EXCLUDED = (date(2020, 3, 1), date(2021, 6, 1))  # COVID: left out of training (months, inclusive)
 CAP = (date(2026, 6, 2), date(2027, 10, 30))  # FAA ORD operations cap, its own regime
 REFERENCE = "calendar"
