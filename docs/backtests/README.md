@@ -1,11 +1,12 @@
 # Backtests
 
-`ordfi.models.backtest` scores probability forecasts on the as-of feature snapshots (`docs/features/`) with the research study's protocol (§6.5, §6.6). The baselines here are the bar every model must beat. The Outlook GBDT is the first model to beat them.
+`ordfi.models.backtest` scores probability forecasts on the as-of feature snapshots (`docs/features/`) with the research study's protocol (§6.5, §6.6). The baselines here are the bar every model must beat. The Outlook GBDT is the first model to beat them, hourly and daily.
 
 ```bash
 make backtest FROM=2024-09 TO=2026-08                       # every task; TASK=dep_late15 for one
 make backtest TASK=hour_gdp FROM=2024-09 TO=2026-08 HORIZONS=6h,1h NAME=my-run
 make backtest TASK=hour_bad60 FROM=2024-09 TO=2026-08 MODELS=gbdt,persistence   # calendar always runs
+make backtest TASK=day_bad60 FROM=2024-09 TO=2026-08 HORIZONS=d1_1900          # daily tasks: issue times
 ```
 
 A run writes `data/backtests/<task>/<run>/`:
@@ -23,6 +24,7 @@ A run writes `data/backtests/<task>/<run>/`:
 - **Scores:**
   - Brier score and log loss;
   - ROC and precision-recall AUC;
+  - the hit rate: the share of events flagged at a false-alarm budget of 10 % of non-events (study §10.3), with the best threshold for the scored rows;
   - expected calibration error over 10 equal-mass bins;
   - the logistic calibration slope and intercept (1 and 0 when calibrated).
 - **Slices** (all post hoc, for evaluation only):
@@ -43,6 +45,9 @@ A run writes `data/backtests/<task>/<run>/`:
 | `hour_bad60` | hours with 10+ departures | 20 %+ of the hour's departures 60+ min late or cancelled | T1 |
 | `hour_gdp` | hours | a general GDP in effect during the hour | T1 |
 | `hour_ground_stop` | hours | a general ground stop in effect during the hour | T1 |
+| `day_bad60` | local days | a bad day: 20 %+ of the day's departures 60+ min late or cancelled (the top decile of 2015 – Aug 2024) | T1 |
+| `day_gdp` | local days | a general GDP in effect at some time in the day | T1 |
+| `day_ground_stop` | local days | a general ground stop in effect at some time in the day | T1 |
 
 All rows are scored, cancelled flights included.
 
@@ -53,11 +58,11 @@ All are `Climatology` models. Each is a ladder of nested cells, and each cell's 
 | Baseline | Cells | Tasks |
 |---|---|---|
 | `base_rate` | none | all |
-| `calendar` | month, then local hour, then weekday | all (the skill reference) |
+| `calendar` | month, then local hour, then weekday (for days: month, then weekday) | all (the skill reference) |
 | `route` | month and local hour, then carrier, then destination | departures |
-| `persistence` | ORD's mean departure delay in the hour before `as_of` (6 buckets) | departures, `hour_bad60` |
+| `persistence` | ORD's mean departure delay in the hour before `as_of` (6 buckets); for days, in the 24 hours before | departures, `hour_bad60`, `day_bad60` |
 | `slack_rule` | the inbound aircraft's known turn slack (no inbound, < 0, 0–14, 15–29, 30–59, ≥ 60 min) | departures |
-| `announced` | a GDP (ground stop) in effect at `as_of`, and announced to cover the target | `hour_gdp` (`hour_ground_stop`) |
+| `announced` | a GDP (ground stop) in effect at `as_of`, and announced to cover the target | `hour_gdp`, `day_gdp` (`hour_ground_stop`, `day_ground_stop`) |
 
 ## Baseline results
 
@@ -95,7 +100,7 @@ Run `baselines-2024-09-to-2026-08`: 24 test months, Sep 2024 – Aug 2026, in 3.
 
 ## Outlook GBDT
 
-`ordfi.models.gbdt`: one LightGBM classifier per task and horizon, refit for every test month (study §6.4). It runs on the three hourly tasks (T1).
+`ordfi.models.gbdt`: one LightGBM classifier per task and horizon, refit for every test month (study §6.4). It runs on the three hourly tasks (T1); the daily outlook below uses the same model on the days spine.
 
 - **Inputs:** all 59 features of the hours spine (`docs/features/`), as known at `as_of`. Booleans become 0/1 and flight categories their rank (LIFR lowest); missing values stay missing.
 - **Number of trees:** the last 12 training months are held out, after a one-day embargo. Early stopping on their log loss picks the number of trees (at most 2,000, patience 100), and the trees are then refit on the whole training window.
@@ -195,3 +200,78 @@ Brier skill without each feature group (change from `gbdt` in brackets):
 - **The FAA cap regime is not in any training window yet.** It began on 2 Jun 2026, and a test month trains on months up to three months before it, so even August 2026 trains on months up to May.
 - **In-day operations assume each departure and arrival is known when it happens** (`docs/features/`). The live archive will measure the real lag.
 - **There is no daily outlook yet.** The study's decision criterion is to flag at least 60 % of the top-decile bad days 24 h ahead, at no more than 1 false alarm per 10 normal days. Measuring it needs a daily spine with a fixed issue time.
+
+## Daily outlook
+
+The same GBDT on the days spine (`docs/features/`): one forecast per local day at each of five issue times, from 19:00 three days before to 05:00 on the day. A bad day uses the hourly cut (20 %+ of the day's departures 60+ min late or cancelled), which marks the top decile of days in 2015 – Aug 2024.
+
+### Settings were frozen on earlier months
+
+As for hours, the settings were chosen on the development months (Sep 2022 – Aug 2024) before the reported run. There are about 3,000 training days per fold, and a 12-month hold-out leaves about 30 bad days to stop and recalibrate on, so the daily models hold out 24 months. Brier skill on the development months:
+
+| Task | Issue | Hourly settings (12 months) | 24 held-out months | Leaves of 50 rows | No recalibration |
+|---|---|---|---|---|---|
+| `day_bad60` | `d1_0700` | 0.096 | 0.091 | 0.099 | 0.105 |
+| | `d1_1900` | 0.189 | 0.207 | 0.170 | 0.223 |
+| | `d0_0500` | 0.173 | 0.221 | 0.167 | 0.223 |
+| `day_gdp` | `d1_0700` | 0.111 | 0.112 | 0.102 | 0.065 |
+| | `d1_1900` | 0.221 | 0.246 | 0.215 | 0.181 |
+| | `d0_0500` | 0.275 | 0.274 | 0.292 | 0.225 |
+| `day_ground_stop` | `d1_0700` | 0.089 | 0.089 | 0.107 | 0.084 |
+| | `d1_1900` | 0.208 | 0.217 | 0.218 | 0.199 |
+| | `d0_0500` | 0.239 | 0.244 | 0.243 | 0.242 |
+
+Summed over all 15 task-issues, 24 held-out months score 1.981, against:
+
+- 1.824 with the hourly settings;
+- 1.843 with leaves of 50 rows;
+- 1.769 without recalibration, whose GDP calibration error reaches 0.05.
+
+### Results
+
+Run `daily-outlook-2024-09-to-2026-08`: the same 24 test months (730 days), 2 minutes for the three tasks. Brier skill against the month-and-weekday climatology, with the 95 % interval for the two issues on the day before:
+
+| Task (base rate) | Model | `d3_1900` | `d2_1900` | `d1_0700` | `d1_1900` | `d0_0500` |
+|---|---|---|---|---|---|---|
+| `day_bad60` (13.7 %) | `gbdt` | 0.036 | 0.046 | 0.208 [0.125, 0.280] | 0.354 [0.278, 0.415] | 0.419 |
+| | `persistence` | 0.017 | 0.025 | 0.021 | 0.056 | 0.089 |
+| `day_gdp` (14.4 %) | `gbdt` | 0.023 | 0.024 | 0.131 [0.084, 0.174] | 0.249 [0.171, 0.300] | 0.305 |
+| | `announced` | −0.002 | 0.000 | −0.007 | 0.028 | 0.072 |
+| `day_ground_stop` (18.8 %) | `gbdt` | 0.015 | 0.028 | 0.164 [0.105, 0.215] | 0.266 [0.199, 0.332] | 0.302 |
+| | `announced` | −0.022 | −0.024 | −0.024 | −0.009 | 0.002 |
+
+**Findings:**
+
+- **The skill starts the day before.**
+  - At the evening-before issue (`d1_1900`, after the 00Z TAF), bad days score 0.354, against 0.056 for persistence. Their ROC AUC is 0.915.
+  - The morning before (`d1_0700`, with the TAF only to noon), they score 0.208.
+  - Two and three days ahead, with no TAF, skill falls to 0.036–0.046, little above the previous day's state.
+- **The GBDT beats every baseline from the morning before.** On both day-before issues, its interval lies above each task's best baseline.
+- **The skill is broad.** At `d1_1900` it is positive in:
+  - 22 of 24 months for bad and GDP days, and 20 of 24 for ground stops;
+  - every season, from 0.224 in summer to 0.521 in autumn for bad days;
+  - the FAA cap months (0.271).
+- **The TAF is the daily outlook.** Without it, bad days at `d1_1900` fall from 0.354 to 0.109, and GDP and ground-stop days lose 0.20–0.23. The previous day's operations add 0.02–0.05 for bad days. Programs announced by the issue time add nothing.
+- **Calibration:**
+  - Bad days are within the 0.03 target from the morning before (0.021–0.025).
+  - GDP and ground-stop days are not (0.031–0.052). They covered 14 % and 19 % of days in the reported months, against 7 % and 15 % in the development months, so the forecasts run low (10 % on average for GDP days).
+
+### The bad-day criterion
+
+The study's decision criterion (§10.3) is to flag at least 60 % of bad days 24 h ahead, at no more than 1 false alarm per 10 normal days. The share of bad days flagged:
+
+| Issue | Best threshold for the reported months, at ≤ 1 false alarm per 10 | Threshold fixed on the development months |
+|---|---|---|
+| `d1_0700` (07:00 the day before) | 55 % | 76 %, at 2.0 false alarms per 10 (p ≥ 0.137) |
+| `d1_1900` (19:00 the evening before) | 71 % | 72 %, at 1.05 per 10 (p ≥ 0.221) |
+| `d0_0500` (05:00 on the day) | 80 % | 85 %, at 1.4 per 10 (p ≥ 0.142) |
+
+- **Met the evening before.** The best threshold flags 71 % of bad days at 1 false alarm per 10 normal days. A threshold fixed beforehand on the development months flags 72 % at 1.05 per 10, and half its flags are right.
+- **Not met at least 24 h ahead of the day's flights.** The morning before, when the TAF reaches only noon, the best threshold flags 55 %. The development months' threshold flags 76 %, but at twice the false alarms: the reported months were stormier, and the forecasts higher.
+
+**Caveats:**
+
+- **Best-threshold hit rates are points on the ROC curve.** A live alert must fix its threshold beforehand, as in the right column.
+- **A threshold fixed on calmer months flags more in stormier ones.** Setting it, or recalibrating the level, on the most recent months is the obvious next step.
+- **The three daily events overlap.** A GDP day is often a bad day, so they are not independent evidence.
+- **Two and three days ahead need forecasts beyond the TAF's 30 hours** (NBM).

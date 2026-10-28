@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Daily outlook tasks (`day_bad60`, `day_gdp`, `day_ground_stop`): a bad day, a GDP day and a ground-stop day, scored at the days spine's five issue times.
+  - Baselines: a month-by-weekday climatology (the skill reference), persistence of the previous 24 hours and announced programs.
+  - Models: the Outlook GBDT on the 67 day features, with 24 held-out months (chosen on the development months) and ablations.
+  - Brier skill on Sep 2024 – Aug 2026: 0.354 for bad days the evening before (persistence 0.056), 0.208 the morning before; GDP and ground-stop days 0.249 and 0.266 the evening before.
+  - The study's bad-day criterion is met the evening before: 71 % of bad days flagged at 1 false alarm per 10 normal days, and 72 % at 1.05 with a threshold fixed on the development months. It is not met the morning before (55 %).
+- Metric `hit_rate`: the share of events flagged at a false-alarm budget of 10 % of non-events, in every backtest's scores.
 - Days spine (`make features SPINE=days`): one row per local ORD day, for the daily outlook, issued at fixed local times.
   - Issues: 19:00 three and two days before, 07:00 and 19:00 the day before, and 05:00 on the day, timed around the TAFs that reach the day.
   - Day groups: the TAF summed over the day's hours, programs announced to cover any part of the day, the last 24 hours of operations (the previous day's state), and the day's scheduled demand and busiest hour.
@@ -84,6 +90,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `--horizons` defaults to each task's own horizons or issue times. A requested horizon applies to the tasks whose spine has it.
 - The backtest harness runs a subset of models (`--models`, `MODELS=`; the calendar reference always runs). It fits test months in parallel worker processes (`--workers`, `WORKERS=`): one per CPU for the hourly tasks by default, one process for the departure tasks. Processes, not threads, because LightGBM boosters trained in concurrent threads corrupt memory.
 - mypy skips scikit-learn imports, which ship no type information.
 - Flight-category logic is a shared dbt macro, used by `weather_obs`, `weather_obs_hourly` and `taf_hourly`.
