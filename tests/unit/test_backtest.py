@@ -1,6 +1,7 @@
 """Rolling-origin folds, and a backtest run on a synthetic feature store."""
 
 import json
+import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -8,6 +9,7 @@ import polars as pl
 import pytest
 
 from ordfi.models import backtest
+from ordfi.models.gbdt import OUTLOOK_FEATURES
 
 
 def test_training_stops_before_the_release_lag_and_skips_covid() -> None:
@@ -21,7 +23,8 @@ def test_training_stops_before_the_release_lag_and_skips_covid() -> None:
 
 def write_store(root: Path, months: list[date], gdp: dict[date, bool]) -> None:
     """Hourly feature files at the 1h horizon, a GDP in every hour of the months in ``gdp``
-    that are True, and the core files the regime slices read."""
+    that are True, and the core files the regime slices read. Features the baselines do not
+    read are missing (VFR for flight categories)."""
     for month in months:
         start = datetime(month.year, month.month, 1, tzinfo=UTC)
         following = backtest.add_months(month, 1)
@@ -33,6 +36,11 @@ def write_store(root: Path, months: list[date], gdp: dict[date, bool]) -> None:
             cal_day_of_week=pl.col("target_utc").dt.weekday(), atc_gdp_now=pl.lit(False),
             atc_gdp_at_target=pl.lit(False), y_gdp=pl.lit(gdp.get(month, False)),
         )  # fmt: skip
+        unread = [name for name in OUTLOOK_FEATURES if name not in frame.columns]
+        frame = frame.with_columns(
+            pl.lit("VFR" if name.endswith("flight_category") else None).alias(name)
+            for name in unread
+        ).with_columns(pl.col(pl.Null).cast(pl.Float64))
         path = root / "features" / "hours" / "horizon=1h" / f"{month:%Y-%m}.parquet"
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.write_parquet(path)
@@ -58,10 +66,24 @@ def test_a_run_never_learns_from_months_it_could_not_have_seen(tmp_path: Path) -
     out = backtest.run("hour_gdp", ["1h"], [date(2019, 7, 1), date(2019, 8, 1)], tmp_path, "t")
     predictions = pl.read_parquet(out / "predictions.parquet")
     assert predictions["p"].max() == 0.0
-    assert set(predictions["model"]) == {"base_rate", "calendar", "announced"}
+    assert set(predictions["model"]) == {
+        "base_rate", "calendar", "announced", "gbdt_schedule", "gbdt", "gbdt_no_taf",
+        "gbdt_no_atc", "gbdt_no_ops",
+    }  # fmt: skip
     metrics = pl.read_parquet(out / "metrics.parquet")
     assert set(metrics["slice"]) == set(backtest.SLICES)
     assert json.loads((out / "run.json").read_text())["label_lag_months"] == 2
+
+
+def test_worker_processes_forecast_as_one_process_does(tmp_path: Path) -> None:
+    write_store(tmp_path, [date(2019, m, 1) for m in range(1, 9)], {date(2019, 2, 1): True})
+    months = [date(2019, 7, 1), date(2019, 8, 1)]
+    one, two = (
+        pl.read_parquet(backtest.run("hour_gdp", ["1h"], months, tmp_path, f"w{n}", ["gbdt"],
+                                     workers=n) / "predictions.parquet")
+        for n in (1, 2)
+    )  # fmt: skip
+    assert set(one["model"]) == {"calendar", "gbdt"} and one.equals(two)
 
 
 def test_the_cli_writes_the_run_and_prints_its_summary(
@@ -69,8 +91,17 @@ def test_the_cli_writes_the_run_and_prints_its_summary(
 ) -> None:
     write_store(tmp_path, [date(2019, m, 1) for m in range(1, 9)], {date(2019, 2, 1): True})
     monkeypatch.setenv("ORDFI_DATA_DIR", str(tmp_path))
-    backtest.main(["--task", "hour_gdp", "--from", "2019-07", "--to", "2019-08",
-                   "--horizons", "1h", "--run", "cli"])  # fmt: skip
+    args = ["--task", "hour_gdp", "--from", "2019-07", "--to", "2019-08", "--horizons", "1h",
+            "--workers", "1", "--run", "cli"]  # fmt: skip
+    backtest.main([*args, "--models", "announced"])
     printed = capsys.readouterr().out
     assert "hour_gdp: A general ORD GDP" in printed and "announced" in printed
-    assert (tmp_path / "backtests" / "hour_gdp" / "cli" / "metrics.parquet").is_file()
+    metrics = pl.read_parquet(tmp_path / "backtests" / "hour_gdp" / "cli" / "metrics.parquet")
+    assert set(metrics["model"]) == {"calendar", "announced"}  # with the skill reference
+    with pytest.raises(SystemExit):
+        backtest.main([*args, "--models", "oracle"])
+
+
+def test_only_the_hourly_tasks_fit_months_in_parallel_by_default() -> None:
+    assert backtest.default_workers(backtest.TASKS["hour_gdp"]) == (os.cpu_count() or 1)
+    assert backtest.default_workers(backtest.TASKS["dep_late15"]) == 1

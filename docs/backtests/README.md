@@ -1,10 +1,11 @@
 # Backtests
 
-`ordfi.models.backtest` scores probability forecasts on the as-of feature snapshots (`docs/features/`) with the research study's protocol (§6.5, §6.6). The baselines here are the bar every model must beat.
+`ordfi.models.backtest` scores probability forecasts on the as-of feature snapshots (`docs/features/`) with the research study's protocol (§6.5, §6.6). The baselines here are the bar every model must beat. The Outlook GBDT is the first model to beat them.
 
 ```bash
 make backtest FROM=2024-09 TO=2026-08                       # every task; TASK=dep_late15 for one
 make backtest TASK=hour_gdp FROM=2024-09 TO=2026-08 HORIZONS=6h,1h NAME=my-run
+make backtest TASK=hour_bad60 FROM=2024-09 TO=2026-08 MODELS=gbdt,persistence   # calendar always runs
 ```
 
 A run writes `data/backtests/<task>/<run>/`:
@@ -30,6 +31,7 @@ A run writes `data/backtests/<task>/<run>/`:
   - days with thunder, and days with snow or freezing precipitation;
   - the FAA operations cap (from 2 Jun 2026);
   - each test month.
+- **Workers.** Test months are independent, so their folds run in parallel worker processes (`WORKERS`). The default is one per CPU for the hourly tasks and a single process for the departure tasks, whose fits take seconds and whose rows would be copied to every worker. Results do not depend on the number of workers. Threads are not used: LightGBM keeps its thread count in process-wide state, and boosters trained in concurrent threads crash or corrupt memory.
 
 ## Tasks
 
@@ -57,7 +59,7 @@ All are `Climatology` models. Each is a ladder of nested cells, and each cell's 
 | `slack_rule` | the inbound aircraft's known turn slack (no inbound, < 0, 0–14, 15–29, 30–59, ≥ 60 min) | departures |
 | `announced` | a GDP (ground stop) in effect at `as_of`, and announced to cover the target | `hour_gdp` (`hour_ground_stop`) |
 
-## First results
+## Baseline results
 
 Run `baselines-2024-09-to-2026-08`: 24 test months, Sep 2024 – Aug 2026, in 3.3 minutes (about a minute per departure task, 3 s per hourly task). Brier skill against the calendar climatology, pooled; the 95 % interval is shown at 1 h:
 
@@ -90,3 +92,106 @@ Run `baselines-2024-09-to-2026-08`: 24 test months, Sep 2024 – Aug 2026, in 3.
 - **The slack rule's skill is optimistic.** Its tails are post-hoc (see `docs/features/`).
 - **A pooled base rate can show an AUC away from 0.5,** because its rate changes from fold to fold.
 - **Calibration slopes are unstable in slices where a forecast barely varies,** e.g. a rule that falls back to the base rate.
+
+## Outlook GBDT
+
+`ordfi.models.gbdt`: one LightGBM classifier per task and horizon, refit for every test month (study §6.4). It runs on the three hourly tasks (T1).
+
+- **Inputs:** all 59 features of the hours spine (`docs/features/`), as known at `as_of`. Booleans become 0/1 and flight categories their rank (LIFR lowest); missing values stay missing.
+- **Number of trees:** the last 12 training months are held out, after a one-day embargo. Early stopping on their log loss picks the number of trees (at most 2,000, patience 100), and the trees are then refit on the whole training window.
+- **Recalibration:** a logistic (Platt) map, fitted on the held-out months' forecasts, sets the forecasts' level. Event rates drift: GDPs covered 0.9–1.6 % of hours in 2022–24, against 2.7–7.0 % in 2015–19 and 3.5–6.3 % in 2025–26.
+- **Parameters:** learning rate 0.05, 15 leaves, at least 200 rows per leaf, 80 % row and feature sampling, an L2 penalty of 10. Single-threaded, seeded and deterministic.
+
+| Model | Features | Purpose |
+|---|---|---|
+| `gbdt` | all | the Outlook |
+| `gbdt_schedule` | calendar and scheduled demand | the study's schedule-only GBDT baseline (§6.5) |
+| `gbdt_no_taf`, `gbdt_no_atc`, `gbdt_no_ops` | all but the TAF, the FAA programs or the in-day operations | each group's value (ablations, §6.5) |
+
+### Settings were frozen on earlier months
+
+The settings were chosen on development test months (Sep 2022 – Aug 2024, same protocol) before the reported months were run. Brier skill against the calendar climatology:
+
+| Task | Horizon | No recalibration | Platt | Isotonic | Platt, 3-year half-life |
+|---|---|---|---|---|---|
+| `hour_bad60` | 24 h | 0.170 | 0.161 | 0.150 | 0.151 |
+| | 6 h | 0.300 | 0.294 | 0.288 | 0.297 |
+| `hour_gdp` | 24 h | 0.077 | 0.158 | 0.146 | 0.158 |
+| | 6 h | 0.144 | 0.216 | 0.202 | 0.221 |
+| `hour_ground_stop` | 24 h | 0.052 | 0.050 | 0.044 | 0.053 |
+| | 6 h | 0.091 | 0.088 | 0.085 | 0.079 |
+
+- **Platt recalibration was adopted.** Summed over all 15 task-horizons, it scores 5.005, against 4.852 without recalibration and 4.900 with isotonic regression.
+  - It costs bad hours up to 0.009 and ground stops up to 0.004.
+  - It gains GDP hours 0.07–0.08 at 24 h and 6 h, where the training years' GDP rate was too high.
+  - It also cuts the GDP calibration error at 24 h from 0.013 to 0.002.
+- **Recency weighting was not adopted** (rows weighted by a 3-year half-life). It helps GDP hours and hurts bad hours, for a net 0.013 over the 15 cases.
+- **Tree size was not changed.** Larger trees (31 leaves, 100 rows per leaf) and smaller ones (7 leaves, 400 rows) were tested at 24 h and 6 h. The defaults were best or tied in five of six cases, and the exception gained 0.002.
+
+### Results
+
+Run `outlook-gbdt-2024-09-to-2026-08`: the baselines' 24 test months, about 2.5 minutes per task on 12 workers. Brier skill against the calendar climatology, pooled, with the 95 % interval at 24 h and 6 h, beside each task's best baseline:
+
+| Task (base rate) | Model | 24 h | 6 h | 3 h | 1 h | 15 min |
+|---|---|---|---|---|---|---|
+| `hour_bad60` (14.3 %) | `gbdt` | 0.249 [0.205, 0.284] | 0.431 [0.372, 0.477] | 0.523 | 0.580 | 0.621 |
+| | `persistence` | 0.030 | 0.015 | 0.162 | 0.295 | 0.314 |
+| `hour_gdp` (3.9 %) | `gbdt` | 0.141 [0.094, 0.183] | 0.292 [0.227, 0.341] | 0.505 | 0.735 | 0.836 |
+| | `announced` | −0.006 | 0.155 | 0.367 | 0.652 | 0.795 |
+| `hour_ground_stop` (3.2 %) | `gbdt` | 0.089 [0.060, 0.117] | 0.146 [0.107, 0.185] | 0.153 | 0.234 | 0.434 |
+| | `announced` | −0.017 | −0.014 | 0.011 | 0.106 | 0.374 |
+
+**Findings:**
+
+- **The v0.1 Outlook targets are met for bad hours.** The targets (study §10.3) are a Brier skill above 0.10 at 24 h and above 0.25 at 6 h, with a calibration error of at most 0.03.
+  - Bad hours score 0.249 and 0.431, with calibration errors of 0.012 and 0.009.
+  - GDP hours reach 0.141 and 0.292, though their intervals dip below the targets.
+  - Ground-stop hours fall short, at 0.089 and 0.146.
+- **The GBDT beats every baseline at every horizon.** At 24 h and 6 h, its interval lies above the best baseline's skill.
+- **It stays calibrated.** The calibration error is at most 0.012 at every horizon, and the calibration slopes are 0.90–1.02.
+- **The skill is broad, not a few storms.**
+  - Bad hours: positive in 21 of 24 test months at 24 h (median 0.18), and in all 24 at 6 h (median 0.39).
+  - GDP hours: positive in 22 of 24 months at both horizons.
+- **By regime**, for bad hours at 24 h:
+  - program days 0.351, other days 0.102;
+  - thunder days 0.341, against 0.195;
+  - snow days 0.317, against 0.220;
+  - FAA cap months 0.243, against 0.251 (0.371 against 0.445 at 6 h).
+- **Calibration on disruption days.** The GBDT's calibration error on program, thunder and snow days is 0.11–0.19 at 24 h, against the climatology's 0.21–0.32. Those days are picked after the fact, which no forecast can know.
+
+### Where the skill comes from
+
+Brier skill without each feature group (change from `gbdt` in brackets):
+
+| Task | Horizon | `gbdt` | `gbdt_schedule` | Without TAF | Without programs | Without operations |
+|---|---|---|---|---|---|---|
+| `hour_bad60` | 24 h | 0.249 | 0.016 | 0.133 (−0.117) | 0.252 (+0.003) | 0.218 (−0.032) |
+| | 6 h | 0.431 | 0.016 | 0.363 (−0.068) | 0.406 (−0.024) | 0.365 (−0.066) |
+| | 1 h | 0.580 | 0.016 | 0.569 (−0.011) | 0.567 (−0.014) | 0.431 (−0.150) |
+| `hour_gdp` | 24 h | 0.141 | 0.008 | 0.022 (−0.119) | 0.143 (+0.002) | 0.141 (−0.000) |
+| | 6 h | 0.292 | 0.008 | 0.214 (−0.078) | 0.222 (−0.070) | 0.290 (−0.001) |
+| | 1 h | 0.735 | 0.008 | 0.725 (−0.010) | 0.431 (−0.304) | 0.729 (−0.007) |
+| `hour_ground_stop` | 24 h | 0.089 | 0.004 | 0.006 (−0.082) | 0.087 (−0.002) | 0.092 (+0.003) |
+| | 6 h | 0.146 | 0.004 | 0.051 (−0.095) | 0.136 (−0.010) | 0.147 (+0.001) |
+| | 1 h | 0.234 | 0.004 | 0.207 (−0.027) | 0.195 (−0.039) | 0.234 (−0.000) |
+
+- **At 24 h the skill is mostly the TAF's.** Without it, the GDP and ground-stop skill nearly vanishes (0.022 and 0.006). Bad hours keep 0.133, from the weather and the airport's state a day earlier, as the literature found (study §6.1).
+- **A better calendar adds little.** The schedule-only GBDT scores 0.004–0.016, so the skill comes from forecasts and the airport's state.
+- **FAA programs count from 6 h** for GDP hours (−0.070 without them), and an announced GDP decides the hour at 1 h (−0.304).
+- **In-day operations carry the short-range bad-hour skill:** −0.150 at 1 h and −0.066 at 6 h.
+- **The strongest inputs** (mean absolute SHAP contribution) of the final fold's 24 h bad-hour model are:
+  - the temperature at `as_of`, a proxy for the air mass (convective afternoons, snow);
+  - the share of departures late in the three hours before `as_of`, i.e. the same time the day before;
+  - the TAF's ceiling, thunder and wind.
+
+**Caveats:**
+
+- **The development months were calmer, and skill was lower there.** Their base rates were 10.3 % for bad hours, 1.3 % for GDP hours and 2.1 % for ground-stop hours. With Platt recalibration, the skill at 24 h and 6 h was:
+  - bad hours: 0.161 and 0.294;
+  - GDP hours: 0.158 and 0.216;
+  - ground-stop hours: 0.050 and 0.088.
+
+  Expect skill to move with each season's weather.
+- **The FAA cap regime is not in any training window yet.** It began on 2 Jun 2026, and a test month trains on months up to three months before it, so even August 2026 trains on months up to May.
+- **In-day operations assume each departure and arrival is known when it happens** (`docs/features/`). The live archive will measure the real lag.
+- **There is no daily outlook yet.** The study's decision criterion is to flag at least 60 % of the top-decile bad days 24 h ahead, at no more than 1 false alarm per 10 normal days. Measuring it needs a daily spine with a fixed issue time.

@@ -4,7 +4,9 @@ Each test month M is forecast by models fitted on the months BTS had published b
 month up to M - 3, since BTS releases a month 6–8 weeks after it ends (``LABEL_LAG``). The
 COVID months are left out of training. Scores are pooled over the test months and split by
 regime (season, program and storm days, the FAA cap), with Brier skill against the calendar
-climatology and intervals from resampling whole days.
+climatology and intervals from resampling whole days. Test months are independent, so their
+folds can be fitted in parallel worker processes (``workers``). Not threads: LightGBM keeps its
+thread count in process-wide state, and boosters trained in concurrent threads corrupt memory.
 
 ``python -m ordfi.models.backtest --task dep_late15 --from 2024-09 --to 2026-08`` writes
 ``backtests/<task>/<run>/``: ``predictions.parquet``, ``metrics.parquet``,
@@ -15,17 +17,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from multiprocessing import get_context
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
 from ordfi.features.spines import HORIZONS
-from ordfi.models import baselines
+from ordfi.models import baselines, gbdt
 from ordfi.models.baselines import LABEL, Model
 from ordfi.models.metrics import reliability, scores, skill
 from ordfi.settings import data_dir
@@ -58,6 +64,16 @@ def _departure_models() -> list[Model]:
             baselines.persistence(), baselines.slack_rule()]  # fmt: skip
 
 
+def _outlook_models(*baseline: Model) -> list[Model]:
+    """The baselines, then the Outlook GBDT: on the schedule alone (calendar and demand), on
+    every feature, and without each of the TAF, the FAA programs and the in-day operations."""
+    ablations = [
+        gbdt.outlook(f"gbdt_no_{left_out.rstrip('_')}", [g for g in gbdt.GROUPS if g != left_out])
+        for left_out in ("taf_", "atc_", "ops_")
+    ]
+    return [*baseline, gbdt.outlook("gbdt_schedule", ("cal_", "dem_")), gbdt.outlook(), *ablations]
+
+
 TASKS = {
     task.name: task
     for task in (
@@ -68,15 +84,18 @@ TASKS = {
         Task("dep_cancelled", "departures", pl.col("y_cancelled"), _departure_models,
              description="An ORD departure is cancelled (T5)"),
         Task("hour_bad60", "hours", pl.col("y_late60_share") >= BAD_HOUR_SHARE,
-             lambda: [baselines.base_rate(), baselines.calendar(), baselines.persistence()],
+             lambda: _outlook_models(baselines.base_rate(), baselines.calendar(),
+                                     baselines.persistence()),
              rows=pl.col("y_n_departures") >= BAD_HOUR_MIN_DEPARTURES,
              description="20 %+ of an hour's ORD departures leave 60+ min late or are cancelled "
                          "(hours with 10+ departures; T1)"),
         Task("hour_gdp", "hours", pl.col("y_gdp"),
-             lambda: [baselines.base_rate(), baselines.calendar(), baselines.announced("gdp")],
+             lambda: _outlook_models(baselines.base_rate(), baselines.calendar(),
+                                     baselines.announced("gdp")),
              description="A general ORD GDP is in effect during the hour (T1)"),
         Task("hour_ground_stop", "hours", pl.col("y_ground_stop"),
-             lambda: [baselines.base_rate(), baselines.calendar(), baselines.announced("gs")],
+             lambda: _outlook_models(baselines.base_rate(), baselines.calendar(),
+                                     baselines.announced("gs")),
              description="A general ORD ground stop is in effect during the hour (T1)"),
     )
 }  # fmt: skip
@@ -117,27 +136,55 @@ def load(task: Task, horizon: str, models: list[Model], root: Path) -> pl.DataFr
     )
 
 
-def predict(task: Task, horizons: list[str], test_months: list[date], root: Path) -> pl.DataFrame:
-    """Every model's forecasts for every test month and horizon."""
+def models_for(task: Task, names: Sequence[str] | None = None) -> list[Model]:
+    """The task's models named in ``names`` (all if None), always with the skill reference."""
     models = task.models()
+    return models if names is None else [m for m in models if m.name in {*names, REFERENCE}]
+
+
+def _fold(key: str, models: list[Model], frame: pl.DataFrame, horizon: str,
+          month: date) -> list[pl.DataFrame]:  # fmt: skip
+    """Every model's forecasts for one test month at one horizon."""
+    available = frame["month"].unique().sort().to_list()
+    test = frame.filter(pl.col("month") == month)
+    train = frame.filter(pl.col("month").is_in(training_months(month, available)))
+    if test.is_empty() or train.is_empty():
+        return []
+    rows = test.select(key, "local_date", LABEL)
+    return [
+        rows.with_columns(horizon=pl.lit(horizon), model=pl.lit(model.name),
+                          test_month=pl.lit(month), p=model.fit_predict(train, test))
+        for model in models
+    ]  # fmt: skip
+
+
+Inputs = tuple[str, list[Model], pl.DataFrame, str]  # key, models, rows and horizon of a fold
+_SHARED: dict[str, Inputs] = {}  # a worker process's inputs to every fold, set once per pool
+
+
+def _share(*inputs: Any) -> None:
+    key, models, frame, horizon = inputs
+    _SHARED["inputs"] = (key, models, frame, horizon)
+
+
+def _shared_fold(month: date) -> list[pl.DataFrame]:
+    key, models, frame, horizon = _SHARED["inputs"]
+    return _fold(key, models, frame, horizon, month)
+
+
+def predict(task: Task, horizons: list[str], test_months: list[date], root: Path,
+            models: list[Model], workers: int = 1) -> pl.DataFrame:  # fmt: skip
+    """Every model's forecasts for every test month and horizon, ``workers`` months at once."""
     parts = []
     for horizon in horizons:
-        frame = load(task, horizon, models, root)
-        available = sorted(frame["month"].unique().to_list())
-        for month in test_months:
-            test = frame.filter(pl.col("month") == month)
-            train = frame.filter(pl.col("month").is_in(training_months(month, available)))
-            if test.is_empty() or train.is_empty():
-                continue
-            for model in models:
-                parts.append(
-                    test.select(_key(task), "local_date", LABEL).with_columns(
-                        horizon=pl.lit(horizon),
-                        model=pl.lit(model.name),
-                        test_month=pl.lit(month),
-                        p=model.fit_predict(train, test),
-                    )
-                )
+        inputs: Inputs = (_key(task), models, load(task, horizon, models, root), horizon)
+        if workers == 1:
+            folds = [_fold(*inputs, month) for month in test_months]
+        else:
+            with ProcessPoolExecutor(workers, mp_context=get_context("spawn"),
+                                     initializer=_share, initargs=inputs) as pool:  # fmt: skip
+                folds = list(pool.map(_shared_fold, test_months))
+        parts += [part for fold in folds for part in fold]
     return pl.concat(parts)
 
 
@@ -232,11 +279,13 @@ def _git_commit() -> str | None:
 
 
 def run(task_name: str, horizons: list[str], test_months: list[date], root: Path,
-        run_name: str | None = None) -> Path:  # fmt: skip
-    """Backtest one task and write its outputs; returns the run directory."""
+        run_name: str | None = None, models: Sequence[str] | None = None,
+        workers: int = 1) -> Path:  # fmt: skip
+    """Backtest one task (the ``models`` named, default all) and write its outputs; returns the
+    run directory."""
     task = TASKS[task_name]
     began = time.monotonic()
-    predictions = predict(task, horizons, test_months, root)
+    predictions = predict(task, horizons, test_months, root, models_for(task, models), workers)
     metrics, bins = evaluate(predictions, day_flags(root / "core"), _key(task))
     name = run_name or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     out = root / "backtests" / task.name / name
@@ -266,16 +315,27 @@ def summary(metrics: pl.DataFrame) -> pl.DataFrame:
     ).with_columns(pl.col("base_rate", "brier", "roc_auc", "ece").round(3))  # fmt: skip
 
 
+def default_workers(task: Task) -> int:
+    """One worker per CPU for the hourly tasks, whose GBDT fits dominate; one process for the
+    departure tasks, whose fits take a second and whose rows would be copied to each worker."""
+    return (os.cpu_count() or 1) if task.spine == "hours" else 1
+
+
 def _month(text: str) -> date:
     return date.fromisoformat(f"{text}-01")
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(description="Rolling-origin backtest of the baselines.")
+    parser = argparse.ArgumentParser(description="Rolling-origin backtest of event forecasts.")
     parser.add_argument("--task", choices=[*TASKS, "all"], default="all")
     parser.add_argument("--from", dest="first", required=True, help="first test month, YYYY-MM")
     parser.add_argument("--to", dest="last", required=True, help="last test month, YYYY-MM")
     parser.add_argument("--horizons", default=",".join(HORIZONS), help="e.g. 24h,6h,1h")
+    parser.add_argument("--models", help=f"e.g. gbdt,persistence (default: all; {REFERENCE} "
+                                         "always runs, as the skill reference)")  # fmt: skip
+    parser.add_argument("--workers", type=int,
+                        help="test months fitted at once (default: one per CPU for hourly tasks, "
+                             "else 1)")  # fmt: skip
     parser.add_argument("--run", help="run name (default: a UTC timestamp)")
     args = parser.parse_args(argv)
     months, month = [], _month(args.first)
@@ -283,9 +343,18 @@ def main(argv: list[str] | None = None) -> None:
         months.append(month)
         month = add_months(month, 1)
     names = list(TASKS) if args.task == "all" else [args.task]
+    wanted = None if args.models is None else args.models.split(",")
+    if wanted is not None:
+        offered = {name: {m.name for m in TASKS[name].models()} for name in names}
+        unknown = set(wanted) - set().union(*offered.values())
+        if unknown:
+            parser.error(f"no task offers the models {sorted(unknown)}")
+        names = [name for name in names if set(wanted) & offered[name]]
     with pl.Config(tbl_rows=-1, tbl_cols=-1, tbl_width_chars=160, tbl_hide_dataframe_shape=True):
         for name in names:
-            out = run(name, args.horizons.split(","), months, data_dir(), args.run)
+            workers = args.workers or default_workers(TASKS[name])
+            out = run(name, args.horizons.split(","), months, data_dir(), args.run, wanted,
+                      workers)  # fmt: skip
             print(f"{name}: {TASKS[name].description}\n  -> {out}", flush=True)
             print(summary(pl.read_parquet(out / "metrics.parquet")), flush=True)
 

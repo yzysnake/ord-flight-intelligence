@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Outlook GBDT (`ordfi.models.gbdt`): a LightGBM classifier per hourly task and horizon, on all 59 features of the hours spine.
+  - Fitting: the last 12 training months, after a one-day embargo, pick the number of trees by early stopping; the trees are then refit on the whole window, and a Platt recalibration fitted on the held-out months sets the level.
+  - Settings were frozen on development months (Sep 2022 – Aug 2024) before the reported run.
+  - Brier skill on Sep 2024 – Aug 2026 is 0.249 at 24 h and 0.431 at 6 h for bad hours (the best baseline scores 0.030 and 0.015), 0.141 and 0.292 for GDP hours, and 0.089 and 0.146 for ground-stop hours. Calibration error is at most 0.012.
+  - The run also scores a schedule-only GBDT and ablations without the TAF, the FAA programs or the in-day operations (see `docs/backtests/`).
+  - Model card: `docs/model-cards/outlook-gbdt.md`.
 - Backtest harness (`ordfi.models.backtest`, `make backtest`). It uses rolling monthly origins, and each fold trains only on months BTS had published (up to M − 3), with the COVID months left out.
   - Scores: Brier skill against the calendar climatology, with intervals from resampling whole days; log loss; ROC and PR AUC; calibration (ECE, slope and intercept) with reliability bins.
   - Results are split by season, program days, storm days, the FAA cap and month.
@@ -73,6 +79,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- The backtest harness runs a subset of models (`--models`, `MODELS=`; the calendar reference always runs). It fits test months in parallel worker processes (`--workers`, `WORKERS=`): one per CPU for the hourly tasks by default, one process for the departure tasks. Processes, not threads, because LightGBM boosters trained in concurrent threads corrupt memory.
 - mypy skips scikit-learn imports, which ship no type information.
 - Flight-category logic is a shared dbt macro, used by `weather_obs`, `weather_obs_hourly` and `taf_hourly`.
 - `flight_leg` reads from `int_bts_legs`. Tail numbers are upper-cased, and placeholders shorter than 4 characters become null.

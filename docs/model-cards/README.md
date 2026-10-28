@@ -1,6 +1,12 @@
 # Model cards
 
-One card per released model (`<model-id>.md`), updated on every promotion. Use these headings:
+One card per released model, or candidate for release (`<model-id>.md`), updated on every promotion.
+
+| Card | Status |
+|---|---|
+| [`outlook-gbdt`](outlook-gbdt.md) | candidate for v0.1 |
+
+Use these headings:
 
 1. **Target and horizon.** What is predicted, for which flights, and how far ahead.
 2. **Training data.** Sources, time window, exclusions and regime flags.

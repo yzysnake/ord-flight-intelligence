@@ -44,13 +44,17 @@ def ece(y: Floats, p: Floats, bins: int = BINS) -> float:
     )
 
 
+def logit(p: Floats) -> Floats:
+    q = np.clip(p, EPS, 1 - EPS)
+    return np.asarray(np.log(q / (1 - q)), dtype=np.float64)
+
+
 def calibration(y: Floats, p: Floats) -> tuple[float, float]:
     """Intercept and slope of logit P(y) on logit(p): (0, 1) when calibrated; a slope below 1
     means forecasts too extreme."""
     if np.unique(y).size < 2 or np.unique(p).size < 2:
         return float("nan"), float("nan")
-    q = np.clip(p, EPS, 1 - EPS)
-    fit = LogisticRegression(C=np.inf).fit(np.log(q / (1 - q)).reshape(-1, 1), y)  # unpenalized
+    fit = LogisticRegression(C=np.inf).fit(logit(p).reshape(-1, 1), y)  # unpenalized
     return float(fit.intercept_[0]), float(fit.coef_[0, 0])
 
 
