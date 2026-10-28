@@ -35,13 +35,7 @@ select
     vsby as visibility_mi,
     ceiling_ft,
     -- FAA categories; a missing ceiling means none reported (unlimited).
-    case
-        when ceiling_ft is null and vsby is null then null
-        when ceiling_ft < 500 or vsby < 1 then 'LIFR'
-        when ceiling_ft < 1000 or vsby < 3 then 'IFR'
-        when ceiling_ft <= 3000 or vsby <= 5 then 'MVFR'
-        else 'VFR'
-    end as flight_category,
+    {{ flight_category('ceiling_ft', 'vsby') }} as flight_category,
     wxcodes,
     coalesce(regexp_matches(wxcodes, 'TS'), false) as has_thunder,  -- includes VCTS (vicinity)
     coalesce(regexp_matches(wxcodes, 'SN'), false) as has_snow,

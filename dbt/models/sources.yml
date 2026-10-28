@@ -26,3 +26,11 @@ sources:
         description: IEM METARs (routine, special, 5-minute HFMETAR), one file per station-year.
         meta:
           external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/iem_asos_metar/*/*/data.parquet')"
+      - name: iem_taf_bulletins
+        description: TAF bulletins parsed by ordfi.ingest.taf (send time, validity window), one file per station-year.
+        meta:
+          external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/iem_taf/bulletins/*/*/data.parquet')"
+      - name: iem_taf_periods
+        description: Prevailing and overlay (TEMPO/PROB) forecast periods of each TAF bulletin.
+        meta:
+          external_location: "read_parquet('{{ env_var('ORDFI_DATA_DIR') }}/stage/iem_taf/periods/*/*/data.parquet')"

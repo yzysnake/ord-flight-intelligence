@@ -22,6 +22,7 @@ make dbt-build SELECT=flight_leg+  # one model and its dependants
 | `weather_obs_hourly` | UTC hour | Latest and worst conditions per hour; empty hours kept. Use rows with `known_time <= as_of` |
 | `atc_program` | ATCSCC program advisory | GDP / ground stop periods parsed to UTC; proposals, cancellations and re-sent listings handled. Filter on `airport` |
 | `aircraft_rotation` | flown leg of an aircraft on a day it touches ORD (national) | Legs in flown order. Each row links to the previous leg (including the previous evening) and carries scheduled and actual ground times and station continuity. Post-hoc: tails are the aircraft that actually flew |
+| `taf_hourly` | ORD TAF × hour of its validity window (2000 →) | Prevailing forecast at the start of the hour plus TEMPO/PROB overlays, from our own bulletin parse (`ordfi.ingest.taf`). Flight categories, including the worst the TAF allows. As of time t: `known_time <= t`, latest issuance per hour |
 
 `int_bts_legs` (ephemeral) is the national BTS union behind `flight_leg` and `aircraft_rotation`. It holds the period rule (marketing file from 2018), the flight key and tail cleaning in one place.
 
@@ -37,5 +38,5 @@ Every model carries `known_time` (when its content became available) and `licenc
 ## Next
 
 - Resolve `atc_program` revisions into in-effect intervals.
-- Hourly TAF forecasts from our own bulletin parser (see the `iem_taf` card).
+- A latest-forecast-as-of model on `taf_hourly`; NBM and LAMP guidance.
 - Dagster assets through `dagster-dbt` (ADR-0003).

@@ -159,3 +159,35 @@ models:
       - name: known_time
         description: The advisory's send time.
         data_tests: [not_null]
+
+  - name: taf_hourly
+    description: >
+      One row per ORD TAF and hour of its validity window (2000 →), from our own parse of the raw
+      bulletins (ordfi.ingest.taf). Each row has the prevailing forecast at the start of the hour
+      and the TEMPO and PROB overlays touching it. For the forecast as of time t, keep rows with
+      known_time <= t and the latest issuance per valid hour.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [product_id, valid_time]
+    columns:
+      - name: valid_time
+        description: Start of the forecast hour (UTC).
+        data_tests: [not_null]
+      - name: known_time
+        description: When the TAF was sent (WMO header) + 10 min.
+        data_tests: [not_null]
+      - name: lead_hours
+        description: Hours from sending to the forecast hour.
+      - name: prevailing_kind
+        description: "The group the prevailing forecast comes from: initial, FM or BECMG."
+      - name: flight_category
+        description: FAA category of the prevailing forecast.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [VFR, MVFR, IFR, LIFR]
+      - name: worst_flight_category
+        description: The worst category the TAF allows for the hour, TEMPO and PROB groups included.
+      - name: prob_pct
+        description: Highest PROB group (30 or 40) touching the hour.

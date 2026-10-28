@@ -1,5 +1,6 @@
 """dbt core models on a tiny synthetic stage: calendar, flight legs, weather and ATC programs."""
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -10,7 +11,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from ordfi.ingest import atcscc, iem
+from ordfi.ingest import atcscc, iem, taf
+from ordfi.ingest.http import Download
+from ordfi.ingest.raw import commit_download
 from ordfi.settings import project_root
 
 UTC_TS = pl.Datetime("us", "UTC")
@@ -137,6 +140,34 @@ def write_stage(root: Path) -> None:
         text(july31, 5, "UNTIL 0100Z"),
         text(august1, 2, "31/2300Z - 01/0200Z"),
     ], {**atcscc.ADVISORY_SCHEMA, "licence_class": pl.String()})  # fmt: skip
+    write_taf(root)
+
+
+# A routine TAF: VFR, then MVFR thunderstorms from 18Z with a TEMPO to IFR, then VFR.
+BULLETIN = """688
+FTUS43 KLOT 150520
+TAFORD
+TAF
+KORD 150520Z 1506/1612 20005KT P6SM SCT050
+     FM151800 22012G20KT 4SM -TSRA BKN030CB
+      TEMPO 1520/1522 1SM +TSRA OVC008CB
+     FM160000 24008KT P6SM SKC="""
+
+
+def write_taf(root: Path) -> None:
+    """Stage the TAF tables the way the pipeline does: a raw bulletin file, then the parser."""
+    payload = f"\x01\n{BULLETIN}\n\x03\n".encode("latin-1")
+    upload = root / "upload.txt"
+    upload.parent.mkdir(parents=True, exist_ok=True)
+    upload.write_bytes(payload)
+    dl = Download(
+        url="https://example.test/retrieve.py", tmp_path=upload, fetched_at=FETCHED, status=200,
+        sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload),
+        content_type="text/plain", last_modified=None, etag=None,
+    )  # fmt: skip
+    commit_download(root, taf.SOURCE_ID, "ORD/bulletins/2019-07", "b.txt", dl, "public-domain",
+                    partition="ORD/2019")  # fmt: skip
+    taf.stage_year(root, 2019)
 
 
 Core = Callable[[str], pl.DataFrame]  # reads one model's Parquet output
@@ -230,3 +261,18 @@ def test_atc_program_periods_resolve_across_days_and_months(core: Core) -> None:
         (date(2019, 8, 1), 2, "dated", at(1, 0, 10, month=8), at(31, 23, 0), at(1, 2, 0, month=8),
          130),
     ]  # fmt: skip
+
+
+def test_taf_hourly_expands_prevailing_and_overlay_groups(core: Core) -> None:
+    hours = core("taf_hourly").sort("valid_time")
+    assert hours.height == 30  # 15 Jul 06Z to 16 Jul 12Z
+    picked = hours.filter(pl.col("valid_time").is_in([at(15, 17, 0), at(15, 20, 0), at(16, 0, 0)]))
+    assert picked.select(
+        "valid_time", "prevailing_kind", "flight_category", "tempo_thunder",
+        "worst_flight_category", "lead_hours",
+    ).rows() == [
+        (at(15, 17, 0), "initial", "VFR", None, "VFR", 11 + 40 / 60),
+        (at(15, 20, 0), "FM", "MVFR", True, "IFR", 14 + 40 / 60),  # TEMPO 1 SM, OVC008
+        (at(16, 0, 0), "FM", "VFR", None, "VFR", 18 + 40 / 60),
+    ]  # fmt: skip
+    assert hours["known_time"].unique().to_list() == [at(15, 5, 30)]
