@@ -1,1 +1,1 @@
-"""Model training, calibration, conformal prediction and the rolling-origin backtest harness."""
+"""Forecast models and their backtests: baselines, metrics and the rolling-origin harness."""
