@@ -151,7 +151,10 @@ models:
       - name: is_proposed
         description: Proposed programs (e.g. "CDM PROPOSED GROUND DELAY PROGRAM") are not in effect.
       - name: period_format
-        description: "How `period_text` was read: 'dated' (DD/HHMMZ - DD/HHMMZ), 'undated' (HHMMZ-HHMMZ) or 'until' (UNTIL HHMMZ)."
+        description: >
+          How `period_text` was read: 'dated' (DD/HHMMZ - DD/HHMMZ, the end's day optional),
+          'open' (DD/HHMM -, no end), 'undated' (HHMMZ-HHMMZ), 'until' (UNTIL HHMMZ, from the send
+          time) or 'update' (an old ground stop's expected update time, from the send time).
       - name: period_text
         description: >
           The advisory's period as written: the program or ground-stop period, or before
@@ -163,10 +166,90 @@ models:
           period is missing, unreadable or implausible (a mistyped day: it runs backwards, lasts
           over two days or starts over two days from the send time).
       - name: end_utc
-        description: Period end; resolved after the start. Null whenever start_utc is.
+        description: Period end; resolved after the start. Null when start_utc is, or for an open period.
       - name: known_time
         description: The advisory's send time.
         data_tests: [not_null]
+
+  - name: atc_program_interval
+    description: >
+      One row per ORD ground delay program or ground stop (2001 →), from its start to its
+      cancellation or end, chained from atc_program's advisories. GDP periods are arrival times at
+      ORD; ground-stop periods are departure times at the origins they cover. Final at
+      known_time; for a program as known earlier, use atc_program_interval_version.
+    columns:
+      - name: program_id
+        description: "Airport, type and first advisory: e.g. ORD-gdp-20190714-112."
+        data_tests: [unique, not_null]
+      - name: program_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [gdp, ground_stop]
+      - name: scope
+        description: >
+          'general', or a ground stop limited to one carrier ('carrier', e.g. "EGF ONLY") or to
+          aircraft not cleared for low-visibility approaches ('equipment', "CAT I"). Each scope is
+          chained separately, so a carrier stop can run during a general one.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [general, carrier, equipment]
+      - name: start_utc
+        description: >
+          The earliest period start of its advisories (else the first send time). A stop
+          re-issued just after a cancellation starts at the cancellation.
+        data_tests: [not_null]
+      - name: end_utc
+        description: >
+          When a cancellation took effect, else the last advisory's end (revisions extend and
+          shorten programs). Null when no advisory states a time (end_reason 'unknown').
+      - name: end_reason
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [cancelled, expired, unknown]
+      - name: planned_end_utc
+        description: The first end stated, before any revision.
+      - name: first_issued_at
+        description: Send time of the first advisory, when the program became known.
+        data_tests: [not_null]
+      - name: min_program_rate
+        description: The lowest hourly arrival rate in the GDP's advisories.
+      - name: known_time
+        description: When the row is final, at the program's end or its last advisory if later.
+        data_tests: [not_null]
+
+  - name: atc_program_interval_version
+    description: >
+      Each ORD program as known after each of its advisories. As of time t, a program is its
+      version with known_time <= t < valid_to (valid_to null: the latest version); it is in effect
+      at t if start_utc <= t < end_utc. The last version matches atc_program_interval.
+    data_tests:
+      - unique_combination:
+          arguments:
+            columns: [program_id, version]
+    columns:
+      - name: program_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('atc_program_interval')
+                field: program_id
+      - name: change
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [issued, revised, updated, partly cancelled, cancelled]
+      - name: start_utc
+        data_tests: [not_null]
+      - name: end_utc
+        description: The end as then stated; at a cancellation, when it took effect.
+      - name: known_time
+        description: The advisory's send time.
+        data_tests: [not_null]
+      - name: valid_to
+        description: When the next version replaced this one (null for the latest).
 
   - name: taf_hourly
     description: >

@@ -1,7 +1,7 @@
 -- One row per ORD-related ATCSCC traffic-management program advisory (GDP, ground stop, AFP,
 -- CTOP): each issuance, revision, proposal and cancellation, with its period parsed to UTC.
 -- Programs at other airports (e.g. MDW) appear when their advisories mention ORD, ZAU or C90;
--- filter on `airport`. Resolving advisories into in-effect intervals is left to a later model.
+-- filter on `airport`. atc_program_interval chains ORD's advisories into in-effect intervals.
 
 with listed as (
     -- A day's listing can repeat a number: re-sends a minute apart, and occasionally a number
@@ -49,18 +49,24 @@ advisories as (
 parts as (
     select
         *,
-        -- "11/1246Z - 12/0759Z" (most), also without "Z", spaces or the slash.
+        -- "11/1246Z - 12/0759Z" (most), also without "Z", spaces, the slash or the end's day
+        -- ("12/2120 - 2230"); "@" is a template leftover ("18/@2050Z").
         regexp_extract(
-            period_text, '(\d{2})/?(\d{2})(\d{2})Z?\s*-\s*(\d{2})/?(\d{2})(\d{2})',
+            period_text, '(\d{2})/?@?(\d{2})(\d{2})Z?\s*-\s*(?:(\d{2})/?@?)?(\d{2})(\d{2})',
             ['d1', 'h1', 'm1', 'd2', 'h2', 'm2']
         ) as dated,
+        -- "22/1254 -": a start without an end (in effect until cancelled).
+        regexp_extract(period_text, '^\s*(\d{2})/@?(\d{2})(\d{2})Z?\s*-\s*$', ['d', 'h', 'm'])
+            as open_start,
         -- "1030Z-1130Z": times without days.
         regexp_extract(
             period_text, '^\s*(\d{2})(\d{2})Z?\s*-\s*(\d{2})(\d{2})Z?\b', ['h1', 'm1', 'h2', 'm2']
         ) as undated,
         -- "UNTIL 0100Z": from the advisory's send time.
         regexp_extract(period_text, '^\s*(?:EXTENDED\s+)?UNTIL\s+(\d{2})(\d{2})', ['h', 'm'])
-            as until_time
+            as until_time,
+        -- "0100Z": old ground stops give only when an update is expected, their planned end.
+        regexp_extract(period_text, '^\s*(\d{2})(\d{2})Z?\s*$', ['h', 'm']) as update_time
     from advisories
 ),
 
@@ -69,14 +75,19 @@ periods as (
         *,
         case
             when dated.d1 != '' then 'dated'
+            when open_start.d != '' then 'open'
             when undated.h1 != '' then 'undated'
             when until_time.h != '' then 'until'
+            when update_time.h != '' then 'update'
         end as period_format,
         case
             when dated.d1 != ''
                 then {{ day_time_near('issued_at', 'dated.d1', 'dated.h1', 'dated.m1') }}
+            when open_start.d != '' then {{ day_time_near(
+                'issued_at', 'open_start.d', 'open_start.h', 'open_start.m'
+            ) }}
             when undated.h1 != '' then {{ time_near('issued_at', 'undated.h1', 'undated.m1') }}
-            when until_time.h != '' then issued_at
+            when until_time.h != '' or update_time.h != '' then issued_at
         end as start_utc
     from parts
 ),
@@ -85,9 +96,14 @@ resolved as (
     select
         *,
         case period_format
-            when 'dated' then {{ day_time_near('start_utc', 'dated.d2', 'dated.h2', 'dated.m2') }}
+            when 'dated' then (case
+                when dated.d2 != ''
+                    then {{ day_time_near('start_utc', 'dated.d2', 'dated.h2', 'dated.m2') }}
+                else {{ time_after('start_utc', 'dated.h2', 'dated.m2') }}
+            end)
             when 'undated' then {{ time_after('start_utc', 'undated.h2', 'undated.m2') }}
             when 'until' then {{ time_after('issued_at', 'until_time.h', 'until_time.m') }}
+            when 'update' then {{ time_after('issued_at', 'update_time.h', 'update_time.m') }}
         end as end_utc
     from periods
 ),
@@ -95,12 +111,15 @@ resolved as (
 checked as (
     -- A mistyped day (e.g. "142056Z-182230Z" sent on the 18th for 2056Z-2230Z) gives a period
     -- that runs backwards, lasts over two days or starts over two days from the send time. It is
-    -- left unresolved rather than guessed; period_text keeps the original.
+    -- left unresolved rather than guessed; period_text keeps the original. Open periods have no
+    -- end to check.
     select
         *,
-        end_utc >= start_utc
-            and end_utc - start_utc <= interval 2 day
-            and abs(epoch(start_utc) - epoch(issued_at)) <= 2 * 86400 as plausible
+        abs(epoch(start_utc) - epoch(issued_at)) <= 2 * 86400
+            and (
+                period_format = 'open'
+                or end_utc >= start_utc and end_utc - start_utc <= interval 2 day
+            ) as plausible
     from resolved
 )
 

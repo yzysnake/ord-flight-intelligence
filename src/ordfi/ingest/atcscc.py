@@ -124,7 +124,8 @@ def parse_fields(text: str) -> dict[str, str]:
     return fields
 
 
-_PERIOD_KEYS = ("CUMULATIVE PROGRAM PERIOD", "PROGRAM PERIOD", "GROUND STOP PERIOD")
+# Ground stops issued during a GDP also state the GDP's cumulative period, so theirs comes first.
+_PERIOD_KEYS = ("GROUND STOP PERIOD", "CUMULATIVE PROGRAM PERIOD", "PROGRAM PERIOD")
 
 
 def first_field(fields: dict[str, str], *names: str) -> str | None:
@@ -135,14 +136,17 @@ def first_field(fields: dict[str, str], *names: str) -> str | None:
 def period_field(fields: dict[str, str]) -> str | None:
     """Program/stop period, cancellation period or reroute validity, whichever is present.
 
-    GDP advisories before November 2006 have no ``PROGRAM PERIOD``; their ``ARRIVALS ESTIMATED
-    FOR`` window is used instead (for a revision it starts at the revision, not the program start).
+    Older and informal layouts have no ``... PERIOD`` field. GDP advisories before November 2006
+    give an ``ARRIVALS ESTIMATED FOR`` window (for a revision it starts at the revision, not the
+    program start). Informal ground stops since 2016 give an ``EVENT TIME`` (``12/2120 - 2230``),
+    and older ones only an ``EXPECT UPDATE`` time, which is their planned end.
     """
     preferred = first_field(fields, *_PERIOD_KEYS)
     if preferred:
         return preferred
     others = [value for key, value in fields.items() if key.endswith("PERIOD") and value]
-    return others[0] if others else first_field(fields, "ARRIVALS ESTIMATED FOR", "VALID")
+    fallbacks = ("ARRIVALS ESTIMATED FOR", "EVENT TIME", "VALID", "EXPECT UPDATE")
+    return others[0] if others else first_field(fields, *fallbacks)
 
 
 def category(title: str) -> str:
@@ -160,6 +164,11 @@ def category(title: str) -> str:
         if re.search(pattern, upper):
             return name
     return "other"
+
+
+def is_cancellation(title: str) -> bool:
+    """Whether a brief title announces a cancellation (``CNX``, ``CANCELLED``, ``CNCL'D``...)."""
+    return bool(re.search(r"\bCNXL?\b|CANCEL|CANCLED|\bCNCL", title.upper()))
 
 
 def is_ord_related(row: ListingRow) -> bool:
@@ -311,7 +320,7 @@ def stage_year(data_root: Path, year: int) -> tuple[Path, Path]:
                     "control_element": row.control_element,
                     "title": row.title,
                     "category": category(row.title),
-                    "is_cancellation": bool(re.search(r"\bCNX\b|CANCEL", row.title.upper())),
+                    "is_cancellation": is_cancellation(row.title),
                     "ord_related": is_ord_related(row),
                     "send_time": row.send_time,
                     "known_time": row.send_time,

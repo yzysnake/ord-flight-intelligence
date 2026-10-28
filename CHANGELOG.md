@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- dbt models `atc_program_interval` and `atc_program_interval_version`: ORD's GDP and ground-stop advisories chained into 5,333 programs (2001 →). Each has its start, its end after revisions and cancellations, how it ended and its scope (general, carrier-only, CAT I/II). Versions give each program as known after each advisory, for point-in-time use. Validated against flights to ORD (see the ATCSCC card).
 - TAF bulletin parser (`ordfi.ingest.taf`), run by `make ingest-iem`. It reads the verbatim bulletins in current and pre-2008 formats into `bulletins` and `periods` stage tables. It repairs IEM's misdated or missing windows and covers TAFs missing from IEM's tables. Validated against IEM and against observed weather (see the `iem_taf` card).
 - dbt model `taf_hourly`: every ORD TAF expanded to hourly prevailing forecasts and TEMPO/PROB overlays, with flight categories, 2000 →.
 - dbt model `aircraft_rotation`: every flown leg of an aircraft on the days it touches ORD (national, 10.6 M legs), in the order the aircraft flew them. Each leg links to the previous one (including the previous evening) and carries scheduled and actual ground times and station continuity. Tests check the chain's coherence and the link to `flight_leg`.
@@ -47,6 +48,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- ATCSCC advisories, found while chaining ORD's programs:
+  - Ground stops issued during a GDP took the GDP's cumulative period (1,468 advisories, 2006 →); their own `GROUND STOP PERIOD` now comes first.
+  - Informal ground stops' `EVENT TIME` (2016 →) and old ones' `EXPECT UPDATE` are read as periods, as are dated periods without the end's day or with an `@` left over. 98.8 % of ORD ground-stop advisories now have a period (93.6 % before).
+  - Cancellations titled `CNCL'D`, `CNXL` or `CANCLED` are flagged as cancellations.
 - ATCSCC advisories in the older layouts, found during the 2001–2014 backfill:
   - GDP periods before November 2006 are read from `ARRIVALS ESTIMATED FOR`, rates from `PROGRAM AAR` (to May 2004) and the element from `AIRPORT`. For 2001–2006 ORD GDPs, periods rise from 5 % to 95 % and rates from 46 % to 88 %.
   - The `AIRPORT` element corrects the airport of 19 program advisories whose listing names another element (e.g. ORD GDPs listed as `ZAU/ORD`, Toronto programs listed under ORD).
