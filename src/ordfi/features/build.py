@@ -98,9 +98,10 @@ def load(core: Path, start: datetime, end: datetime, lead: timedelta) -> Tables:
         )
         for name in ("gfs_mos", "nbm")
     }
+    climate = timedelta(days=max(groups.PROGRAM_CLIMATE_DAYS))  # programs of the recent past
     versions = scan("atc_program_interval_version").filter(
         (pl.col("known_time") < end)
-        & (pl.coalesce("end_utc", pl.col("start_utc") + timedelta(days=1)) > before)
+        & (pl.coalesce("end_utc", pl.col("start_utc") + timedelta(days=1)) > before - climate)
     )
     programs = scan("atc_program_interval").filter(
         (pl.col("end_utc") > start - timedelta(hours=1)) & (pl.col("start_utc") < after)

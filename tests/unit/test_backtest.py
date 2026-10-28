@@ -20,6 +20,8 @@ def test_training_stops_before_the_release_lag_and_skips_covid() -> None:
     assert date(2020, 2, 1) in months and date(2021, 7, 1) in months
     assert date(2020, 3, 1) not in months and date(2021, 6, 1) not in months  # COVID
     assert backtest.training_months(date(2019, 9, 1), available)[-1] == date(2019, 6, 1)
+    # Labels from FAA advisories are known the same day: train up to the month before.
+    assert backtest.training_months(date(2019, 9, 1), available, lag=0)[-1] == date(2019, 8, 1)
 
 
 HORIZON = {"hours": "1h", "days": "d1_1900"}
@@ -83,7 +85,7 @@ def test_a_run_never_learns_from_months_it_could_not_have_seen(
     assert predictions["p"].max() == 0.0
     assert set(predictions["model"]) == {
         "base_rate", "calendar", "announced", "gbdt_schedule", "gbdt", "gbdt_no_taf",
-        "gbdt_no_guidance", "gbdt_no_atc", "gbdt_no_ops", "gbdt_recent",
+        "gbdt_no_guidance", "gbdt_no_atc", "gbdt_no_climate", "gbdt_no_ops", "gbdt_recent",
     }  # fmt: skip
     metrics = pl.read_parquet(out / "metrics.parquet")
     assert set(metrics["slice"]) == set(backtest.SLICES)

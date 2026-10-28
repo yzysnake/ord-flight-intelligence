@@ -104,7 +104,7 @@ Run `baselines-2024-09-to-2026-08`: 24 test months, Sep 2024 – Aug 2026, in 3.
 
 `ordfi.models.gbdt`: one LightGBM classifier per task and horizon, refit for every test month (study §6.4). It runs on the three hourly tasks (T1); the daily outlook below uses the same model on the days spine.
 
-> **Since the station guidance was added, `gbdt` also reads GFS MOS and NBM (86 hourly and 94 daily features).** The results in this section and the next two are for the model before it, scored now as `gbdt_no_guidance`. The current model's results are under *Station guidance* below.
+> **Since the station guidance was added, `gbdt` also reads GFS MOS and NBM (86 hourly and 94 daily features). The GDP and ground-stop models have since added the program climate (90 and 98).** The results in this section and the next two are for the model before the guidance, which the run `outlook-guidance-…` scores as `gbdt_no_guidance`. The current model's results are under *Station guidance* and *Calibration of GDP and ground-stop days* below.
 
 - **Inputs:** all 59 features of the hours spine (`docs/features/`), as known at `as_of`. Booleans become 0/1 and flight categories their rank (LIFR lowest); missing values stay missing.
 - **Number of trees:** the last 12 training months are held out, after a one-day embargo. Early stopping on their log loss picks the number of trees (at most 2,000, patience 100), and the trees are then refit on the whole training window.
@@ -353,7 +353,7 @@ Run `outlook-track-record-2024-09-to-2026-08`, the six outlook tasks on the same
 
 ## Station guidance (GFS MOS and NBM)
 
-The outlook GBDT reads the `mos_` and `nbm_` features (`docs/features/`): GFS MOS from 2014-12 and NBM from 2018-11, for the target hour or day, from the latest run known at `as_of`. They are the only forecast weather beyond the TAF's 30 hours. `gbdt_no_guidance` is the model without them, which is the model of the sections above.
+The outlook GBDT reads the `mos_` and `nbm_` features (`docs/features/`): GFS MOS from 2014-12 and NBM from 2018-11, for the target hour or day, from the latest run known at `as_of`. They are the only forecast weather beyond the TAF's 30 hours. In the run below, `gbdt_no_guidance` is the model without them, which is the model of the sections above.
 
 ### Adopted on the development months
 
@@ -424,4 +424,104 @@ Run `outlook-guidance-2024-09-to-2026-08`: the six outlook tasks on the same 24 
 - **NBM changed versions often** (v4.0 2020-09 to v5.0 2026-05), and the model cannot see which version a row came from.
 - **The knowledge times are the catalog cards' estimates,** not measured on IEM's feed: the GFS MOS run + 5 h (conservative) and the NBM cycle + 70 min.
 - **Three days ahead, GFS MOS reaches only about midday** of the target day.
-- **Daily GDP and ground-stop days are still miscalibrated** (errors 0.035–0.057): they doubled in the reported months against the years the models learned from.
+- **Daily GDP and ground-stop days are still miscalibrated** (errors 0.035–0.057): they doubled in the reported months against the years the models learned from. The next section looks into why.
+
+## Calibration of GDP and ground-stop days
+
+In the reported months, the daily GDP and ground-stop forecasts ran low. The evening before, the GBDT forecast a GDP on 9.6 % of days on average, and 14.4 % of days had one. Calibration errors were 0.035–0.057, against the 0.03 target. This section finds why, tests three fixes on two development windows, and adopts one: the recent program climate.
+
+### Why they ran low
+
+- **ORD's programs came back.**
+  - GDP days were 12–22 % of days in 2015–19 and 5–8 % in 2022–24, then 13 % in 2025 and 22 % in 2026 so far.
+  - Ground-stop days moved the same way, by less: 15 % in 2022–24, 18 % in 2025 and 24 % in 2026.
+- **The models' level came from the calm years.** The daily models' Platt recalibration sets their level on the 24 held-out months before the training cut. For the reported months, 73 % of those months fell in 2022–24.
+- **Programs for staffing were new.**
+  - From 2015 to 2024 there were three: two GDPs and a ground stop, all in 2023.
+  - 2025 had 12 GDPs and 11 ground stops for staffing, and 2026 so far 11 and 12.
+  - In October 2025 (the federal shutdown), six of the month's seven GDPs cited staffing. The evening before, the forecast averaged 3 % against 23 % of days.
+
+### Three fixes, on two development windows
+
+The development months used so far (Sep 2022 – Aug 2024) had fewer programs than the years before them: GDPs on 6.6 % of days, against 10.5 % from Jul 2021 to Aug 2022. A fix for a rising rate must also be tried where the rate rose, so a second window was added: Sep 2018 – Feb 2020, with GDPs on 19.4 % of days against 14.7 % in 2015 – Aug 2018. The rule was fixed before the runs: adopt a fix if, over the four GDP and ground-stop tasks (20 task-horizons), the mean calibration error falls and the summed Brier skill does not, in both windows.
+
+1. **The recent program climate.** Four features: the local days among the last 7 and 30 with a GDP, and with a ground stop, from the advisories known at `as_of` (`docs/features/`). Advisories are known as they are sent, so the counts follow a change in how often programs run within days.
+2. **Training up to the month before** (a label lag of 0 instead of 2). The GDP and ground-stop labels come from the advisories, which are known the same day, not from BTS. Live, the in-day operations of those months would come from the live feed.
+3. **A shift to a recent track record.** The forecasts are shifted on the logit scale to the level of the last 3, 6 or 12 months, with the record ending the month before. The 12-month record ending with M − 3 is `gbdt_recent`. The shifts were applied to the model with the climate.
+
+| Fix | Skill, Sep 2018 – Feb 2020 | Calibration error | Skill, Sep 2022 – Aug 2024 | Calibration error |
+|---|---|---|---|---|
+| None (the guidance model) | 5.275 | 0.02737 | 5.400 | 0.01234 |
+| **The program climate** | **5.316** | **0.02723** | **5.408** | **0.01228** |
+| Training to the month before | 5.385 | 0.02825 | 5.238 | 0.01195 |
+| Both | 5.419 | 0.02635 | 5.209 | 0.01185 |
+| Climate, shifted on 3 months | 5.497 | 0.02675 | 4.778 | 0.01598 |
+| Climate, shifted on 6 months | 5.389 | 0.03027 | 5.149 | 0.01303 |
+| Climate, shifted on 12 months | 5.056 | 0.03587 | 5.157 | 0.01401 |
+| Climate, `gbdt_recent` (12 months to M − 3) | 4.751 | 0.03746 | 5.157 | 0.01336 |
+
+- **The program climate passed, narrowly.**
+  - It gained 0.041 and 0.008 in skill, and lowered the calibration error by 0.00015 and 0.00006.
+  - Most of the gain was hourly. The daily calibration error barely moved (0.04737 → 0.04739 and 0.02324 → 0.02317).
+- **The bad-delay events leave it out.** On the same windows, the climate cost `hour_bad60` and `day_bad60` 0.013 in summed skill in 2018–20 and nothing in 2022–24, and raised their calibration error in both.
+- **Training to the month before was rejected.** With the climate, it lowered the calibration error in both windows and gained 0.10 in skill in 2018–20, but lost 0.20 in 2022–24.
+- **No shift was adopted.**
+  - The 3-month shift was the best fix in 2018–20 (+0.18) and the worst in 2022–24 (−0.63).
+  - The 6-month shift gained skill in 2018–20 but raised its calibration error. The 12-month shifts lost skill in both.
+
+### Results
+
+Run `outlook-climate-2024-09-to-2026-08`: the four GDP and ground-stop tasks on the same 24 test months, with every model and the track-record alerts, in 14 minutes. `gbdt_no_climate` reproduces the guidance run's GBDT exactly. The bad-delay models did not change (their forecasts match the guidance run's), so their results are still those of `outlook-guidance-…`. Brier skill against the calendar climatology, with the 95 % interval:
+
+| Task (base rate) | Horizon | With the climate | Without | Gain | Calibration error (with / without) | Mean forecast (with / without) |
+|---|---|---|---|---|---|---|
+| `hour_gdp` (3.9 %) | 24 h | 0.186 [0.115, 0.242] | 0.177 | +0.008 | 0.008 / 0.011 | 3.1 % / 2.7 % |
+| | 6 h | 0.324 [0.238, 0.383] | 0.321 | +0.002 | 0.005 / 0.007 | 3.5 % / 3.2 % |
+| `hour_ground_stop` (3.2 %) | 24 h | 0.132 [0.092, 0.164] | 0.135 | −0.003 | 0.005 / 0.006 | 2.7 % / 2.6 % |
+| | 6 h | 0.167 [0.125, 0.208] | 0.165 | +0.002 | 0.004 / 0.005 | 2.8 % / 2.7 % |
+| `day_gdp` (14.4 %) | `d3_1900` | 0.158 [0.111, 0.208] | 0.149 | +0.009 | 0.048 / 0.055 | 9.6 % / 9.0 % |
+| | `d2_1900` | 0.227 [0.163, 0.286] | 0.212 | +0.015 | 0.047 / 0.054 | 9.7 % / 9.3 % |
+| | `d1_0700` | 0.235 [0.175, 0.289] | 0.217 | +0.017 | 0.050 / 0.055 | 9.4 % / 8.9 % |
+| | `d1_1900` | 0.276 [0.207, 0.336] | 0.264 | +0.012 | 0.049 / 0.050 | 9.6 % / 9.6 % |
+| | `d0_0500` | 0.310 [0.236, 0.375] | 0.289 | +0.021 | 0.054 / 0.056 | 9.5 % / 9.0 % |
+| `day_ground_stop` (18.8 %) | `d3_1900` | 0.172 [0.119, 0.233] | 0.174 | −0.002 | 0.037 / 0.035 | 15.5 % / 15.6 % |
+| | `d2_1900` | 0.211 [0.158, 0.276] | 0.217 | −0.006 | 0.043 / 0.036 | 15.3 % / 15.7 % |
+| | `d1_0700` | 0.245 [0.184, 0.302] | 0.238 | +0.007 | 0.039 / 0.043 | 15.4 % / 15.2 % |
+| | `d1_1900` | 0.307 [0.243, 0.373] | 0.302 | +0.005 | 0.050 / 0.057 | 15.7 % / 15.9 % |
+| | `d0_0500` | 0.329 [0.260, 0.395] | 0.324 | +0.005 | 0.041 / 0.040 | 15.8 % / 15.8 % |
+
+**Findings:**
+
+- **GDPs gain, and their calibration improves.**
+  - GDP days gain 0.009–0.021 at every issue, and their calibration error falls to 0.047–0.054 (from 0.050–0.056).
+  - GDP hours gain at every horizon but 15 min (−0.0001), and their calibration improves at all five. At 24 h they reach 0.186, with a calibration error of 0.008 (from 0.011).
+- **Ground stops are mixed.**
+  - Their skill moves by −0.006 to +0.007, within the intervals.
+  - Daily calibration improves the day before (0.050 from 0.057 the evening before), but not two and three days ahead or on the day.
+- **The cost falls on quiet days in busy spells.**
+  - On days with no program at all, hourly skill at 24 h falls from 0.286 to −0.003 for GDPs and from 0.046 to −0.098 for ground stops. At 6 h, ground stops fall from 0.045 to −0.021.
+  - Those days' Brier score is tiny (0.001–0.002), so a small lift in their forecasts turns their skill negative: for GDPs at 24 h, the mean forecast goes from 1.35 % to 1.55 %.
+  - For GDP hours, the program days gain more than the quiet days lose. For ground-stop hours at 24 h they do not, which is why that horizon slips to 0.132.
+- **The rule would have adopted the climate on these months too.** Over the 20 task-horizons, summed skill is 6.235 against 6.126 without it, and the mean calibration error 0.0248 against 0.0263.
+- **The daily level is still low.**
+  - GDP days are forecast at 9.5 % on average against 14.4 %, and ground-stop days at 15.5 % against 18.8 %.
+  - Calibration errors stay at 0.037–0.054, above the 0.03 target.
+- **Staffing programs account for about half of the shortfall.**
+  - The evening before, days with a staffing program hold 50 % of the GDP days' shortfall (events less forecasts) and 53 % of the ground-stop days'.
+  - The 19 days whose GDPs all cited staffing were forecast at 17 % on average, against 32 % for the 82 GDP days without staffing.
+  - Ground-stop days for staffing alone were forecast at 25 %, those without staffing at 39 %.
+  - In October and November 2025, GDPs ran on 23 % and 30 % of days, against forecasts of 3 % and 7 %.
+- **The rest of the shortfall is the stormier months.** In March and April 2026, GDPs ran on 35 % and 30 % of days, against forecasts of 15 % and 21 %. Ground stops were over-forecast in July 2026 (13 % against 26 %).
+- **The rejected shift would have done better on the daily level here.**
+  - `gbdt_recent` brings the daily calibration errors to 0.025–0.042 for GDP days and 0.028–0.037 for ground-stop days, at skill within 0.015 of the GBDT's.
+  - It still loses 0.017–0.021 for GDP hours at 24 h and 6 h, and 0.08 in skill summed over the 20 task-horizons (6.155).
+  - Adopting it now would mean choosing on the test months.
+- **Alerts change little.** Catches move by −3 to +4 points and false alarms by −0.08 to +0.11 per 10 normal days or hours. The largest change is GDP hours at 24 h: 82 % caught at 1.63 false alarms per 10, from 78 % at 1.52.
+
+**Caveats:**
+
+- **Daily GDP and ground-stop calibration is still above the target.** The weather cannot forecast a staffing program, and before 2025 the models had almost none to learn from.
+- **The training windows will catch up.** Models fitted from November 2026 on learn from the 38 staffing programs of January 2025 – August 2026. Whether that is enough is for the monitoring to show.
+- **The next candidates,** each to be chosen on both development windows:
+  - the advisories' stated cause as a feature, such as the days among the last 7 and 30 with a staffing program;
+  - a shift that waits for evidence, such as one shrunk by the record's size or triggered by a run of misses.
