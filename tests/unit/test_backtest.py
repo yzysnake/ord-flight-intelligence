@@ -8,8 +8,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from ordfi.features.spines import days
 from ordfi.models import backtest
-from ordfi.models.gbdt import OUTLOOK_FEATURES
+from ordfi.models.gbdt import FEATURES
 
 
 def test_training_stops_before_the_release_lag_and_skips_covid() -> None:
@@ -21,27 +22,37 @@ def test_training_stops_before_the_release_lag_and_skips_covid() -> None:
     assert backtest.training_months(date(2019, 9, 1), available)[-1] == date(2019, 6, 1)
 
 
-def write_store(root: Path, months: list[date], gdp: dict[date, bool]) -> None:
-    """Hourly feature files at the 1h horizon, a GDP in every hour of the months in ``gdp``
-    that are True, and the core files the regime slices read. Features the baselines do not
-    read are missing (VFR for flight categories)."""
+HORIZON = {"hours": "1h", "days": "d1_1900"}
+
+
+def write_store(root: Path, months: list[date], gdp: dict[date, bool],
+                spine: str = "hours") -> None:  # fmt: skip
+    """Hourly feature files at the 1h horizon (or daily ones at the d1_1900 issue), a GDP in
+    every target of the months in ``gdp`` that are True, and the core files the regime slices
+    read. Features the baselines do not read are missing (VFR for flight categories)."""
     for month in months:
         start = datetime(month.year, month.month, 1, tzinfo=UTC)
         following = backtest.add_months(month, 1)
         end = datetime(following.year, following.month, 1, tzinfo=UTC)
-        hours = pl.datetime_range(start, end, "1h", closed="left", eager=True)
-        frame = pl.DataFrame({"target_utc": hours}).with_columns(
-            as_of=pl.col("target_utc") - timedelta(hours=1),
-            cal_month=pl.lit(month.month), cal_local_hour=pl.col("target_utc").dt.hour(),
-            cal_day_of_week=pl.col("target_utc").dt.weekday(), atc_gdp_now=pl.lit(False),
-            atc_gdp_at_target=pl.lit(False), y_gdp=pl.lit(gdp.get(month, False)),
+        if spine == "days":
+            frame = days(month, following, ["d1_1900"]).with_columns(cal_local_hour=pl.lit(0))
+        else:
+            hours = pl.datetime_range(start, end, "1h", closed="left", eager=True)
+            frame = pl.DataFrame({"target_utc": hours}).with_columns(
+                as_of=pl.col("target_utc") - timedelta(hours=1),
+                cal_local_hour=pl.col("target_utc").dt.hour(),
+            )
+        frame = frame.with_columns(
+            cal_month=pl.lit(month.month), cal_day_of_week=pl.col("target_utc").dt.weekday(),
+            atc_gdp_now=pl.lit(False), atc_gdp_at_target=pl.lit(False),
+            y_gdp=pl.lit(gdp.get(month, False)),
         )  # fmt: skip
-        unread = [name for name in OUTLOOK_FEATURES if name not in frame.columns]
+        unread = [name for name in FEATURES[spine] if name not in frame.columns]
         frame = frame.with_columns(
             pl.lit("VFR" if name.endswith("flight_category") else None).alias(name)
             for name in unread
         ).with_columns(pl.col(pl.Null).cast(pl.Float64))
-        path = root / "features" / "hours" / "horizon=1h" / f"{month:%Y-%m}.parquet"
+        path = root / "features" / spine / f"horizon={HORIZON[spine]}" / f"{month:%Y-%m}.parquet"
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.write_parquet(path)
     core = root / "core"
@@ -58,12 +69,16 @@ def write_store(root: Path, months: list[date], gdp: dict[date, bool]) -> None:
     ).write_parquet(core / "atc_program_interval.parquet")
 
 
-def test_a_run_never_learns_from_months_it_could_not_have_seen(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("task", "spine"), [("hour_gdp", "hours"), ("day_gdp", "days")])
+def test_a_run_never_learns_from_months_it_could_not_have_seen(
+    tmp_path: Path, task: str, spine: str
+) -> None:
     months = [date(2019, m, 1) for m in range(1, 9)]
     # GDPs only in months a July or August forecast may not use (the two months of release
     # lag before each and the test months), so any leaked label would lift a forecast above 0.
-    write_store(tmp_path, months, {m: m >= date(2019, 6, 1) for m in months})
-    out = backtest.run("hour_gdp", ["1h"], [date(2019, 7, 1), date(2019, 8, 1)], tmp_path, "t")
+    write_store(tmp_path, months, {m: m >= date(2019, 6, 1) for m in months}, spine)
+    test_months = [date(2019, 7, 1), date(2019, 8, 1)]
+    out = backtest.run(task, [HORIZON[spine]], test_months, tmp_path, "t")
     predictions = pl.read_parquet(out / "predictions.parquet")
     assert predictions["p"].max() == 0.0
     assert set(predictions["model"]) == {
@@ -100,8 +115,11 @@ def test_the_cli_writes_the_run_and_prints_its_summary(
     assert set(metrics["model"]) == {"calendar", "announced"}  # with the skill reference
     with pytest.raises(SystemExit):
         backtest.main([*args, "--models", "oracle"])
+    with pytest.raises(SystemExit):  # a daily task has issue times, not 1h
+        backtest.main([*args[:1], "day_gdp", *args[2:]])
 
 
-def test_only_the_hourly_tasks_fit_months_in_parallel_by_default() -> None:
-    assert backtest.default_workers(backtest.TASKS["hour_gdp"]) == (os.cpu_count() or 1)
+def test_only_the_departure_tasks_run_in_one_process_by_default() -> None:
+    for task in ("hour_gdp", "day_bad60"):
+        assert backtest.default_workers(backtest.TASKS[task]) == (os.cpu_count() or 1)
     assert backtest.default_workers(backtest.TASKS["dep_late15"]) == 1

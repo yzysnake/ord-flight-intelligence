@@ -1,9 +1,10 @@
 """Scores for probability forecasts of binary events (research study §6.6).
 
 Proper scores (Brier, log loss) and their skill against a reference forecast, discrimination
-(ROC and precision-recall AUC) and calibration (equal-mass reliability bins, ECE and the
-logistic calibration slope and intercept). Skill intervals resample whole days, because the
-flights of one day share its weather and programs (§6.5).
+(ROC and precision-recall AUC, and the hit rate at a false-alarm budget) and calibration
+(equal-mass reliability bins, ECE and the logistic calibration slope and intercept). Skill
+intervals resample whole days, because the flights of one day share its weather and programs
+(§6.5).
 """
 
 from __future__ import annotations
@@ -11,11 +12,12 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import NDArray
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score, roc_curve
 
 Floats = NDArray[np.float64]
 EPS = 1e-6
 BINS = 10
+FALSE_ALARMS = 0.1  # the study's alert budget: 1 false alarm per 10 normal days (§10.3)
 
 
 def brier(y: Floats, p: Floats) -> float:
@@ -58,6 +60,16 @@ def calibration(y: Floats, p: Floats) -> tuple[float, float]:
     return float(fit.intercept_[0]), float(fit.coef_[0, 0])
 
 
+def hit_rate(y: Floats, p: Floats, false_alarms: float = FALSE_ALARMS) -> float:
+    """The share of events flagged (forecast at or above a threshold) when the threshold flags
+    at most ``false_alarms`` of the non-events: a point of the ROC curve. The threshold is the
+    best one for these rows, so a live alert must fix it beforehand."""
+    if np.unique(y).size < 2:
+        return float("nan")
+    false_positive, true_positive, _ = roc_curve(y, p)
+    return float(true_positive[false_positive <= false_alarms].max())
+
+
 def scores(y: Floats, p: Floats) -> dict[str, float]:
     """Every score of one forecast set (AUCs are NaN when only one outcome occurs)."""
     both = np.unique(y).size == 2
@@ -70,6 +82,7 @@ def scores(y: Floats, p: Floats) -> dict[str, float]:
         "log_loss": log_loss(y, p),
         "roc_auc": float(roc_auc_score(y, p)) if both else float("nan"),
         "pr_auc": float(average_precision_score(y, p)) if both else float("nan"),
+        "hit_rate": hit_rate(y, p),
         "ece": ece(y, p),
         "cal_intercept": intercept,
         "cal_slope": slope,

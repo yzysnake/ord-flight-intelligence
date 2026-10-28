@@ -94,9 +94,10 @@ INBOUND = (
     .then(pl.lit("no inbound"))
     .otherwise(_buckets("inb_slack_min", [0, 15, 30, 60], ["<0", "0-14", "15-29", "30-59", ">=60"]))
 )
-RECENT_DELAY = _buckets(
-    "ops_dep_1h_delay_mean", [0, 10, 20, 40, 60], ["<0", "0-9", "10-19", "20-39", "40-59", ">=60"]
-)
+DAY_CALENDAR_LEVELS = [["cal_month"], ["cal_month", "cal_day_of_week"]]
+DELAY_EDGES, DELAY_LABELS = [0, 10, 20, 40, 60], ["<0", "0-9", "10-19", "20-39", "40-59", ">=60"]
+RECENT_DELAY = _buckets("ops_dep_1h_delay_mean", DELAY_EDGES, DELAY_LABELS)
+PREVIOUS_DAY_DELAY = _buckets("ops_dep_24h_delay_mean", DELAY_EDGES, DELAY_LABELS)
 
 
 def base_rate() -> Climatology:
@@ -106,6 +107,11 @@ def base_rate() -> Climatology:
 def calendar() -> Climatology:
     """By month, local hour and weekday: the climatology that skill is measured against."""
     return Climatology("calendar", CALENDAR_LEVELS)
+
+
+def day_calendar() -> Climatology:
+    """By month and weekday: the daily outlook's skill reference."""
+    return Climatology("calendar", DAY_CALENDAR_LEVELS)
 
 
 def route() -> Climatology:
@@ -125,6 +131,12 @@ def slack_rule() -> Climatology:
 def persistence() -> Climatology:
     """The rate by ORD's departure delay in the hour before as_of."""
     return Climatology("persistence", [["recent_delay"]], derived={"recent_delay": RECENT_DELAY})
+
+
+def day_persistence() -> Climatology:
+    """The rate by ORD's departure delay in the 24 hours before as_of (the previous day)."""
+    return Climatology("persistence", [["previous_day"]],
+                       derived={"previous_day": PREVIOUS_DAY_DELAY})  # fmt: skip
 
 
 def announced(kind: str) -> Climatology:

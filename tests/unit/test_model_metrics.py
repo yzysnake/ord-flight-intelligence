@@ -4,7 +4,16 @@ import math
 
 import numpy as np
 
-from ordfi.models.metrics import brier, calibration, ece, log_loss, reliability, scores, skill
+from ordfi.models.metrics import (
+    brier,
+    calibration,
+    ece,
+    hit_rate,
+    log_loss,
+    reliability,
+    scores,
+    skill,
+)
 
 
 def test_proper_scores() -> None:
@@ -47,3 +56,13 @@ def test_one_outcome_leaves_discrimination_undefined() -> None:
     result = scores(np.zeros(4), np.array([0.1, 0.2, 0.3, 0.4]))
     assert math.isnan(result["roc_auc"]) and math.isnan(result["cal_slope"])
     assert result["base_rate"] == 0.0 and result["n"] == 4.0
+
+
+def test_hit_rate_is_the_events_caught_within_the_false_alarm_budget() -> None:
+    y = np.array([1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=float)
+    p = np.array([0.9, 0.8, 0.3, 0.1, 0.85, 0.5, 0.2, 0.2, 0.1, 0.1, 0.1, 0.1, 0.0, 0.0])
+    # Flagging p >= 0.8 catches 2 of the 4 events with 1 false alarm in 10 non-events; going
+    # down to 0.5 adds a second false alarm. With no false alarms, only p >= 0.9 is flagged.
+    assert hit_rate(y, p, false_alarms=0.1) == 0.5
+    assert hit_rate(y, p, false_alarms=0.0) == 0.25
+    assert math.isnan(hit_rate(np.zeros(3), np.array([0.1, 0.2, 0.3])))

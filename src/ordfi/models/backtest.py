@@ -30,7 +30,7 @@ from typing import Any
 
 import polars as pl
 
-from ordfi.features.spines import HORIZONS
+from ordfi.features.spines import horizons
 from ordfi.models import baselines, gbdt
 from ordfi.models.baselines import LABEL, Model
 from ordfi.models.metrics import reliability, scores, skill
@@ -43,6 +43,9 @@ REFERENCE = "calendar"
 LOCAL_TZ = "America/Chicago"
 BAD_HOUR_SHARE = 0.2  # an outlook "bad hour": 20 %+ of departures 60+ min late or cancelled
 BAD_HOUR_MIN_DEPARTURES = 10
+# A "bad day" on the same cut: the top decile of days in 2015 – Aug 2024 (COVID left out).
+BAD_DAY_SHARE = 0.2
+BAD_DAY_MIN_DEPARTURES = 100
 
 
 @dataclass(frozen=True)
@@ -64,14 +67,25 @@ def _departure_models() -> list[Model]:
             baselines.persistence(), baselines.slack_rule()]  # fmt: skip
 
 
-def _outlook_models(*baseline: Model) -> list[Model]:
-    """The baselines, then the Outlook GBDT: on the schedule alone (calendar and demand), on
-    every feature, and without each of the TAF, the FAA programs and the in-day operations."""
+def _outlook_models(spine: str, *baseline: Model) -> list[Model]:
+    """The baselines, then the Outlook GBDT on the spine's features: on the schedule alone
+    (calendar and demand), on every feature, and without each of the TAF, the FAA programs and
+    the operations."""
     ablations = [
-        gbdt.outlook(f"gbdt_no_{left_out.rstrip('_')}", [g for g in gbdt.GROUPS if g != left_out])
+        gbdt.outlook(f"gbdt_no_{left_out.rstrip('_')}",
+                     [g for g in gbdt.GROUPS if g != left_out], spine)
         for left_out in ("taf_", "atc_", "ops_")
-    ]
-    return [*baseline, gbdt.outlook("gbdt_schedule", ("cal_", "dem_")), gbdt.outlook(), *ablations]
+    ]  # fmt: skip
+    return [*baseline, gbdt.outlook("gbdt_schedule", ("cal_", "dem_"), spine),
+            gbdt.outlook(spine=spine), *ablations]  # fmt: skip
+
+
+def _hour_models(*baseline: Model) -> list[Model]:
+    return _outlook_models("hours", baselines.base_rate(), baselines.calendar(), *baseline)
+
+
+def _day_models(*baseline: Model) -> list[Model]:
+    return _outlook_models("days", baselines.base_rate(), baselines.day_calendar(), *baseline)
 
 
 TASKS = {
@@ -84,19 +98,28 @@ TASKS = {
         Task("dep_cancelled", "departures", pl.col("y_cancelled"), _departure_models,
              description="An ORD departure is cancelled (T5)"),
         Task("hour_bad60", "hours", pl.col("y_late60_share") >= BAD_HOUR_SHARE,
-             lambda: _outlook_models(baselines.base_rate(), baselines.calendar(),
-                                     baselines.persistence()),
+             lambda: _hour_models(baselines.persistence()),
              rows=pl.col("y_n_departures") >= BAD_HOUR_MIN_DEPARTURES,
              description="20 %+ of an hour's ORD departures leave 60+ min late or are cancelled "
                          "(hours with 10+ departures; T1)"),
         Task("hour_gdp", "hours", pl.col("y_gdp"),
-             lambda: _outlook_models(baselines.base_rate(), baselines.calendar(),
-                                     baselines.announced("gdp")),
+             lambda: _hour_models(baselines.announced("gdp")),
              description="A general ORD GDP is in effect during the hour (T1)"),
         Task("hour_ground_stop", "hours", pl.col("y_ground_stop"),
-             lambda: _outlook_models(baselines.base_rate(), baselines.calendar(),
-                                     baselines.announced("gs")),
+             lambda: _hour_models(baselines.announced("gs")),
              description="A general ORD ground stop is in effect during the hour (T1)"),
+        Task("day_bad60", "days", pl.col("y_late60_share") >= BAD_DAY_SHARE,
+             lambda: _day_models(baselines.day_persistence()),
+             rows=pl.col("y_n_departures") >= BAD_DAY_MIN_DEPARTURES,
+             description="A bad day: 20 %+ of a local day's ORD departures leave 60+ min late or "
+                         "are cancelled (T1)"),
+        Task("day_gdp", "days", pl.col("y_gdp"),
+             lambda: _day_models(baselines.announced("gdp")),
+             description="A general ORD GDP is in effect at some time in the local day (T1)"),
+        Task("day_ground_stop", "days", pl.col("y_ground_stop"),
+             lambda: _day_models(baselines.announced("gs")),
+             description="A general ORD ground stop is in effect at some time in the local day "
+                         "(T1)"),
     )
 }  # fmt: skip
 
@@ -316,9 +339,10 @@ def summary(metrics: pl.DataFrame) -> pl.DataFrame:
 
 
 def default_workers(task: Task) -> int:
-    """One worker per CPU for the hourly tasks, whose GBDT fits dominate; one process for the
-    departure tasks, whose fits take a second and whose rows would be copied to each worker."""
-    return (os.cpu_count() or 1) if task.spine == "hours" else 1
+    """One worker per CPU for the hourly and daily tasks, whose GBDT fits dominate; one process
+    for the departure tasks, whose fits take a second and whose rows would be copied to each
+    worker."""
+    return 1 if task.spine == "departures" else (os.cpu_count() or 1)
 
 
 def _month(text: str) -> date:
@@ -330,12 +354,13 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--task", choices=[*TASKS, "all"], default="all")
     parser.add_argument("--from", dest="first", required=True, help="first test month, YYYY-MM")
     parser.add_argument("--to", dest="last", required=True, help="last test month, YYYY-MM")
-    parser.add_argument("--horizons", default=",".join(HORIZONS), help="e.g. 24h,6h,1h")
+    parser.add_argument("--horizons", help="e.g. 24h,6h,1h, or d1_1900 for the daily tasks "
+                                           "(default: all of each task's spine)")  # fmt: skip
     parser.add_argument("--models", help=f"e.g. gbdt,persistence (default: all; {REFERENCE} "
                                          "always runs, as the skill reference)")  # fmt: skip
     parser.add_argument("--workers", type=int,
-                        help="test months fitted at once (default: one per CPU for hourly tasks, "
-                             "else 1)")  # fmt: skip
+                        help="test months fitted at once (default: one per CPU, or 1 for the "
+                             "departure tasks)")  # fmt: skip
     parser.add_argument("--run", help="run name (default: a UTC timestamp)")
     args = parser.parse_args(argv)
     months, month = [], _month(args.first)
@@ -350,11 +375,19 @@ def main(argv: list[str] | None = None) -> None:
         if unknown:
             parser.error(f"no task offers the models {sorted(unknown)}")
         names = [name for name in names if set(wanted) & offered[name]]
+    # Each task runs the requested horizons its spine has (all of them by default).
+    chosen = {name: horizons(TASKS[name].spine) for name in names}
+    if args.horizons is not None:
+        requested = args.horizons.split(",")
+        unknown = set(requested) - {h for name in names for h in chosen[name]}
+        if unknown:
+            parser.error(f"no task has the horizons {sorted(unknown)}")
+        chosen = {name: [h for h in requested if h in chosen[name]] for name in names}
+        names = [name for name in names if chosen[name]]
     with pl.Config(tbl_rows=-1, tbl_cols=-1, tbl_width_chars=160, tbl_hide_dataframe_shape=True):
         for name in names:
             workers = args.workers or default_workers(TASKS[name])
-            out = run(name, args.horizons.split(","), months, data_dir(), args.run, wanted,
-                      workers)  # fmt: skip
+            out = run(name, chosen[name], months, data_dir(), args.run, wanted, workers)
             print(f"{name}: {TASKS[name].description}\n  -> {out}", flush=True)
             print(summary(pl.read_parquet(out / "metrics.parquet")), flush=True)
 

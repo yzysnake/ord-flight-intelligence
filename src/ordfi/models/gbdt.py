@@ -62,6 +62,32 @@ OUTLOOK_FEATURES = (
     "ops_sched_dep_1h_n", "ops_dep_flow_1h",
     "dem_departures", "dem_arrivals",
 )  # fmt: skip
+# Every feature of the days spine, by group.
+DAY_FEATURES = (
+    "cal_day_of_week", "cal_month", "cal_is_weekend", "cal_is_holiday", "cal_days_to_holiday",
+    "cal_days_since_holiday",
+    "wx_age_min", "wx_flight_category", "wx_visibility_mi", "wx_ceiling_ft", "wx_wind_speed_kt",
+    "wx_wind_gust_kt", "wx_temp_c", "wx_thunder", "wx_snow", "wx_freezing",
+    "wx_min_visibility_3h", "wx_min_ceiling_3h", "wx_thunder_3h", "wx_snow_3h",
+    "taf_day_hours", "taf_day_amendment", "taf_day_ifr_hours", "taf_day_thunder_hours",
+    "taf_day_snow_hours", "taf_day_max_wind_kt", "taf_day_max_gust_kt", "taf_day_min_ceiling_ft",
+    "taf_day_min_visibility_sm", "taf_day_max_prob_pct", "taf_day_age_min",
+    "taf_day_flight_category", "taf_day_worst_flight_category",
+    "atc_gdp_now", "atc_gdp_since_start_min", "atc_gdp_to_end_min", "atc_gdp_at_target",
+    "atc_gs_now", "atc_gs_since_start_min", "atc_gs_to_end_min", "atc_gs_at_target",
+    "atc_gdp_issued_24h", "atc_gs_issued_24h",
+    "ops_dep_1h_n", "ops_dep_1h_delay_mean", "ops_dep_1h_late15_share", "ops_dep_3h_n",
+    "ops_dep_3h_delay_mean", "ops_dep_3h_late15_share", "ops_arr_1h_n", "ops_arr_1h_delay_mean",
+    "ops_arr_1h_late15_share", "ops_arr_3h_n", "ops_arr_3h_delay_mean", "ops_arr_3h_late15_share",
+    "ops_sched_dep_1h_n", "ops_dep_flow_1h", "ops_dep_24h_n", "ops_dep_24h_delay_mean",
+    "ops_dep_24h_late15_share", "ops_arr_24h_n", "ops_arr_24h_delay_mean",
+    "ops_arr_24h_late15_share",
+    "dem_departures", "dem_peak_departures", "dem_arrivals", "dem_peak_arrivals",
+)  # fmt: skip
+FEATURES = {"hours": OUTLOOK_FEATURES, "days": DAY_FEATURES}
+# Months held out for early stopping and recalibration: a year of hours, but two years of days,
+# which give 30 times fewer rows (chosen on the development months, docs/backtests/).
+VALIDATION_MONTHS = {"hours": 12, "days": 24}
 GROUPS = ("cal_", "wx_", "taf_", "atc_", "ops_", "dem_")
 
 
@@ -108,9 +134,11 @@ class GBDT:
         return np.asarray(0.5 ** (years / self.half_life_years), dtype=np.float64)
 
 
-def outlook(name: str = "gbdt", groups: Sequence[str] = GROUPS, **options: Any) -> GBDT:
-    """The Outlook GBDT on the hours spine's features of ``groups`` (prefixes)."""
-    return GBDT(name, [f for f in OUTLOOK_FEATURES if f.startswith(tuple(groups))], **options)
+def outlook(name: str = "gbdt", groups: Sequence[str] = GROUPS, spine: str = "hours",
+            **options: Any) -> GBDT:  # fmt: skip
+    """The Outlook GBDT on the ``spine``'s features (hours or days) of ``groups`` (prefixes)."""
+    features = [f for f in FEATURES[spine] if f.startswith(tuple(groups))]
+    return GBDT(name, features, **{"validation_months": VALIDATION_MONTHS[spine], **options})
 
 
 def encode(
