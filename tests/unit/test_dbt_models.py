@@ -51,6 +51,10 @@ def at(day: int, hour: int, minute: int, month: int = 7, year: int = 2019) -> da
     return datetime(year, month, day, hour, minute, tzinfo=UTC)
 
 
+def aug5(hour: int, minute: int) -> datetime:
+    return at(5, hour, minute, month=8)
+
+
 def leg(day: date, origin: str, dest: str, dep: str, sched_dep: datetime, sched_arr: datetime,
         **fields: object) -> dict[str, object]:  # fmt: skip
     return {
@@ -118,15 +122,17 @@ def write_stage(root: Path) -> None:
     def listed(day: date, number: int, title: str, category: str, sent: datetime,
                element: str = "ORD/ZAU") -> dict[str, object]:  # fmt: skip
         return {"adv_date": day, "number": number, "control_element": element, "title": title,
-                "category": category, "is_cancellation": False, "ord_related": True,
-                "send_time": sent, "known_time": sent,
+                "category": category, "is_cancellation": atcscc.is_cancellation(title),
+                "ord_related": True, "send_time": sent, "known_time": sent,
                 "licence_class": "public-domain"}  # fmt: skip
 
-    def text(day: date, number: int, period: str, element: str = "ORD") -> dict[str, object]:
+    def text(day: date, number: int, period: str | None, element: str = "ORD",
+             **fields: object) -> dict[str, object]:  # fmt: skip
         return {"adv_date": day, "number": number, "ctl_element": element, "period": period,
-                "average_delay": "130", "licence_class": "public-domain"}  # fmt: skip
+                "average_delay": "130", "licence_class": "public-domain", **fields}  # fmt: skip
 
-    july31, august1 = date(2019, 7, 31), date(2019, 8, 1)
+    july31, august1, august5 = date(2019, 7, 31), date(2019, 8, 1), date(2019, 8, 5)
+
     write(root, "faa_atcscc_advisories/index/year=2019", [
         listed(july15, 3, "CDM GROUND DELAY PROGRAM", "gdp", at(15, 0, 57)),
         listed(july15, 7, "ROUTE RQD", "reroute", at(15, 1, 0), "DCC"),
@@ -134,6 +140,18 @@ def write_stage(root: Path) -> None:
         listed(july31, 5, "CDM GROUND STOP", "ground_stop", at(31, 23, 41)),  # re-sent
         listed(august1, 2, "CDM GROUND DELAY PROGRAM", "gdp", at(1, 0, 10, month=8)),
         listed(august1, 4, "ORD GROUND STOP", "ground_stop", at(1, 20, 59, month=8)),
+        # 5 Aug: a GDP shortened, then cancelled; a stop extended after it lapsed, partly
+        # cancelled, cancelled and re-issued backdated; a carrier-only stop beside it.
+        listed(august5, 11, "CDM PROPOSED GROUND DELAY PROGRAM", "gdp", aug5(13, 40)),
+        listed(august5, 10, "CDM GROUND DELAY PROGRAM", "gdp", aug5(14, 0)),
+        listed(august5, 12, "CDM GROUND STOP", "ground_stop", aug5(15, 10)),
+        listed(august5, 13, "ORD GROUND STOP FOR NKS ONLY", "ground_stop", aug5(15, 30)),
+        listed(august5, 14, "CDM GROUND DELAY PROGRAM", "gdp", aug5(16, 0)),
+        listed(august5, 15, "CDM GROUND STOP", "ground_stop", aug5(16, 5)),
+        listed(august5, 16, "PARTIAL ORD GROUND STOP CANCELLATION", "ground_stop", aug5(16, 20)),
+        listed(august5, 17, "CDM GS CNX", "ground_stop", aug5(16, 30)),
+        listed(august5, 18, "CDM GROUND STOP", "ground_stop", aug5(16, 40)),
+        listed(august5, 20, "CDM GROUND DELAY PROGRAM CNX", "gdp", aug5(19, 2)),
     ], {**atcscc.INDEX_SCHEMA, "licence_class": pl.String()})  # fmt: skip
     write(root, "faa_atcscc_advisories/advisories/year=2019", [
         text(july15, 3, "14/2219Z - 15/0259Z"),
@@ -141,6 +159,16 @@ def write_stage(root: Path) -> None:
         text(july31, 5, "UNTIL 0100Z"),
         text(august1, 2, "31/2300Z - 01/0200Z"),
         text(august1, 4, "142056Z-012230Z"),  # start day mistyped (14 for 01)
+        text(august5, 11, "05/1500Z - 05/2359Z"),
+        text(august5, 10, "05/1500Z - 05/2359Z", program_rate="68/68/72"),
+        text(august5, 12, "05/1505Z - 05/1600Z"),
+        text(august5, 13, "05/1530Z - 05/1700Z"),
+        text(august5, 14, "05/1500Z - 05/2159Z", program_rate="64"),
+        text(august5, 15, "05/1605Z - 05/1700Z"),
+        text(august5, 16, None),
+        text(august5, 17, None),
+        text(august5, 18, "05/1625Z - 05/1730Z"),
+        text(august5, 20, "05/1900Z - 05/2159Z"),
     ], {**atcscc.ADVISORY_SCHEMA, "licence_class": pl.String()})  # fmt: skip
     write_taf(root)
 
@@ -253,7 +281,7 @@ def test_weather_hours_keep_gaps_and_latest_values(core: Core) -> None:
 
 
 def test_atc_program_periods_resolve_across_days_and_months(core: Core) -> None:
-    programs = core("atc_program").sort("issued_at")
+    programs = core("atc_program").filter(pl.col("adv_date") < date(2019, 8, 5)).sort("issued_at")
     assert programs.select(
         "adv_date", "number", "period_format", "issued_at", "start_utc", "end_utc",
         "average_delay_min",
@@ -263,6 +291,46 @@ def test_atc_program_periods_resolve_across_days_and_months(core: Core) -> None:
         (date(2019, 8, 1), 2, "dated", at(1, 0, 10, month=8), at(31, 23, 0), at(1, 2, 0, month=8),
          130),
         (date(2019, 8, 1), 4, "dated", at(1, 20, 59, month=8), None, None, 130),  # implausible
+    ]  # fmt: skip
+
+
+def test_atc_program_intervals_chain_revisions_cancellations_and_scopes(core: Core) -> None:
+    programs = core("atc_program_interval").sort("start_utc", "program_id")
+    assert programs.select(
+        "program_id", "scope", "start_utc", "end_utc", "end_reason", "n_advisories",
+    ).rows() == [
+        ("ORD-gdp-20190715-003", "general", at(14, 22, 19), at(15, 2, 59), "expired", 1),
+        ("ORD-gdp-20190801-002", "general", at(31, 23, 0), at(1, 2, 0, month=8), "expired", 1),
+        ("ORD-ground_stop-20190731-005", "general", at(31, 23, 41), at(1, 1, 0, month=8),
+         "expired", 1),
+        # Its period is implausible, so only its send time is known.
+        ("ORD-ground_stop-20190801-004", "general", at(1, 20, 59, month=8), None, "unknown", 1),
+        # The proposal is left out; the revision shortened the GDP, then it was cancelled.
+        ("ORD-gdp-20190805-010", "general", aug5(15, 0), aug5(19, 0), "cancelled", 2),
+        # Extended 5 minutes after it lapsed; the partial cancellation does not end it.
+        ("ORD-ground_stop-20190805-012", "general", aug5(15, 5), aug5(16, 30), "cancelled", 2),
+        # The carrier-only stop runs on past the general stop's cancellation.
+        ("ORD-ground_stop-20190805-013", "carrier", aug5(15, 30), aug5(17, 0), "expired", 1),
+        # Re-issued backdated to 16:25; it starts at the cancellation.
+        ("ORD-ground_stop-20190805-018", "general", aug5(16, 30), aug5(17, 30), "expired", 1),
+    ]  # fmt: skip
+    gdp = programs.filter(pl.col("program_id") == "ORD-gdp-20190805-010")
+    assert gdp.select("planned_end_utc", "min_program_rate", "cancelled_at", "known_time").row(
+        0
+    ) == (aug5(23, 59), 64, aug5(19, 2), aug5(19, 2))  # fmt: skip
+
+
+def test_atc_program_interval_versions_replay_each_advisory(core: Core) -> None:
+    versions = core("atc_program_interval_version").filter(
+        pl.col("program_id") == "ORD-ground_stop-20190805-012"
+    )
+    assert versions.sort("version").select(
+        "version", "change", "start_utc", "end_utc", "known_time", "valid_to",
+    ).rows() == [
+        (1, "issued", aug5(15, 5), aug5(16, 0), aug5(15, 10), aug5(16, 5)),
+        (2, "revised", aug5(15, 5), aug5(17, 0), aug5(16, 5), aug5(16, 20)),
+        (3, "partly cancelled", aug5(15, 5), aug5(17, 0), aug5(16, 20), aug5(16, 30)),
+        (4, "cancelled", aug5(15, 5), aug5(16, 30), aug5(16, 30), None),
     ]  # fmt: skip
 
 

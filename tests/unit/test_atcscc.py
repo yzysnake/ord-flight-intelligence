@@ -79,6 +79,32 @@ def test_category(title: str, expected: str) -> None:
     assert atcscc.category(title) == expected
 
 
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("CDM GS CNX", True),
+        ("ORD GROUND STOP CANCELATION", True),
+        ("GROUND STOP CNCL'D", True),
+        ("ORD GROUND STOP CNXL", True),
+        ("ORD GROUND STOP CANCLED", True),
+        ("CDM GROUND STOP", False),
+        ("ORD GROUND STOP EXTENSION", False),
+    ],
+)
+def test_is_cancellation(title: str, expected: bool) -> None:
+    assert atcscc.is_cancellation(title) is expected
+
+
+def test_period_field_prefers_the_ground_stop_and_reads_informal_layouts() -> None:
+    gs_in_gdp = {
+        "GROUND STOP PERIOD": "06/2055Z - 06/2200Z",
+        "CUMULATIVE PROGRAM PERIOD": "06/1930Z - 07/0259Z",  # the GDP's
+    }
+    assert atcscc.period_field(gs_in_gdp) == "06/2055Z - 06/2200Z"
+    assert atcscc.period_field({"EVENT TIME": "12/1215 - 1315"}) == "12/1215 - 1315"
+    assert atcscc.period_field({"EXPECT UPDATE": "0115Z", "REASON": "VOLUME"}) == "0115Z"
+
+
 def test_ord_selection() -> None:
     rows = atcscc.parse_listing(LISTING)
     assert [atcscc.is_ord_related(r) for r in rows] == [True, False, True]
