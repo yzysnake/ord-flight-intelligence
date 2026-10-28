@@ -7,6 +7,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Station guidance in the outlook (`mos_` and `nbm_` features on the hours and days spines, in the GBDT, with the `gbdt_no_guidance` ablation).
+  - For the target hour or day, each projection comes from the latest GFS MOS or NBM run known. The features are the worst flight category, the lowest ceiling and visibility, the highest thunder, precipitation and precipitation-type probabilities, IFR probabilities, wind and gusts, plus coverage and age.
+  - The leakage property test covers them (injected leaks caught 20 of 20 times), with no mismatches in 1,350 real rows.
+  - The guidance was adopted on the development months: summed daily skill 1.98 → 3.00, hourly 5.01 → 5.29.
+  - On Sep 2024 – Aug 2026, bad days score 0.250 two days ahead and 0.229 three days ahead (0.046 and 0.036 before), and 0.293 the morning before (0.208).
+  - Hourly 24 h skill rises by 0.04–0.05. Ground-stop hours now reach the 24 h target, and GDP hours meet both v0.1 targets.
+  - The two-days-ahead bad-day alert catches 59 % of bad days at 0.97 false alarms per 10 normal days.
 - GFS MOS and NBM station guidance for ORD (`ordfi.ingest.mos`, `make ingest-mos`), from IEM's MOS archive, one request per model and month.
   - Coverage: GFS MOS (00, 06, 12 and 18Z runs) from 2014-12, and the NBM short-range bulletin (01, 07, 13 and 19Z cycles) from 2018-11, both 3-hourly to 72 h.
   - dbt models `gfs_mos` and `nbm` decode the ceiling and visibility (MAV categories; NBM feet and miles, unlimited ceilings) into flight categories, beside thunder, precipitation, precipitation-type and IFR probabilities, snow, ice, wind and gusts.

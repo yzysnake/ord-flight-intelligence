@@ -35,6 +35,7 @@ Defined once in `ordfi.features.knowledge`, which also gives `visible(tables, as
 | Input | Known at |
 |---|---|
 | METAR (`weather_obs`), TAF (`taf_hourly`) | `known_time`: issued + 10 min |
+| Station guidance: GFS MOS (`gfs_mos`), NBM (`nbm`) | `known_time`: the run + 5 h, the cycle + 70 min (catalog cards `iem_mos`, `noaa_nbm`) |
 | ATC program versions (`atc_program_interval_version`) | the advisory's send time; a version's `valid_to` only once the next version is known |
 | Flight schedule: times, carriers, route, block time | 7 days before scheduled departure (schedules are published months ahead) |
 | Tail number | 6 hours before scheduled departure |
@@ -50,6 +51,7 @@ Defined once in `ordfi.features.knowledge`, which also gives `visible(tables, as
 | `wx_` | all | Latest ORD METAR (age, flight category, visibility, ceiling, wind, gusts, temperature, thunder, snow, freezing) and the last three hours' minimum visibility and ceiling, thunder and snow |
 | `taf_` | departures, hours | Latest TAF covering the target's hour: lead time, flight category and the worst it allows, visibility, ceiling, wind, thunder and snow (prevailing, TEMPO or PROB), PROB percentage. Null beyond the TAF's 30 hours |
 | `taf_day_` | days | The latest TAF for each hour of the target day, summed up (details below). Null when no TAF reaches the day |
+| `mos_`, `nbm_` | hours, days | Station guidance for the target hour or day, from GFS MOS (2014-12 →) and NBM (2018-11 →), each 3-hourly projection from the latest run known (details below). Null beyond the guidance's 72 hours |
 | `atc_` | all | ORD's general GDP and ground stop: in effect now, minutes since the start and to the announced end, announced to cover the target (for days, any part of it, including programs that ended earlier that day), and how many were issued in the last 24 hours |
 | `ops_` | all | ORD departures and arrivals that happened in the last one and three hours (count, mean delay, share 15+ min late), and departures scheduled in the last hour against those that left (`ops_dep_flow_1h`). For days also the last 24 hours (`ops_dep_24h_*`, `ops_arr_24h_*`): the previous day's state |
 | `dem_` | all | ORD departures and arrivals scheduled in the target's hour; for days, on the target day and in its busiest hour (`dem_peak_departures`, `dem_peak_arrivals`) |
@@ -63,6 +65,18 @@ The `taf_day_` features cover the target day's hours, each forecast by the lates
 - `taf_day_ifr_hours`, `taf_day_thunder_hours` and `taf_day_snow_hours`: hours forecast IFR or worse, with thunder (prevailing, TEMPO or PROB) and with snow;
 - the strongest wind and gust, the lowest ceiling and visibility, and the highest PROB;
 - `taf_day_age_min` and `taf_day_amendment`: the newest TAF's age and whether it is an amendment.
+
+The `mos_` and `nbm_` features read the projections within 90 minutes of the target hour (or day) for instantaneous elements, and the periods overlapping it for the others:
+
+- the worst flight category;
+- the lowest ceiling and visibility (MOS categories; NBM feet and miles);
+- the strongest wind, and NBM's gust;
+- the highest conditional probabilities of snow and freezing precipitation (and NBM's sleet);
+- NBM's probabilities of IFR ceiling and visibility (from NBM v4.0, 2020-09);
+- the highest thunder (MOS 6-hour, NBM 3-hour) and 6-hour precipitation probabilities, and NBM's snow and ice amounts;
+- how many projections cover the target (`_projections`) and the newest run's age (`_age_min`).
+
+Two and three days ahead they are the only forecast weather. GFS MOS reaches 72 hours, so the `d3_1900` issue sees the target day only to about midday.
 
 Null means unknown or absent: no ceiling reported (unlimited), no gusts, no TAF for the hour or day, no program in effect, no tail yet. A program version without an end (an open ground stop) is taken to last 2 hours.
 
@@ -81,9 +95,11 @@ Null means unknown or absent: no ceiling reported (unlimited), no gusts, no TAF 
   - the final program version;
   - the TAF regardless of its send time.
 - **The days spine** is checked on 60 worlds, every issue of each. It catches the day groups seeing past `as_of` (the TAF and the programs 6 hours ahead, the previous day 1 hour ahead) in 24 of 24 runs.
+- **Station guidance** is in every world too: random GFS MOS and NBM runs with their lags. The test catches the guidance seeing runs 6 hours ahead, and runs used at their run time instead of their known time, on both outlook spines in 20 of 20 runs.
 - **No leakage on real data.** The same check finds no mismatches:
   - 300 rows per spine in Jan 2016, Jul 2019 and Feb 2024 (1,800 rows);
-  - every row of the days spine in those months and Nov 2025, a month with a clock change (605 rows).
+  - every row of the days spine in those months and Nov 2025, a month with a clock change (605 rows);
+  - with the guidance added, 300 hours and every day in Jul 2019, Feb 2024 and Nov 2025 (1,350 rows).
 - **Signal** (2015 – Aug 2026, 3.66 M departures per horizon, 23 % departing 15+ min late or cancelled):
 
 | At 1 h | Late or cancelled |
@@ -102,6 +118,8 @@ For days (4,261 days): 11.1 % are bad days (20 %+ of departures 60+ min late or 
 | TAF thunder at some hour of the day / none | 36 % / 7.1 % | 35 % / 9.2 % | no TAF |
 | Worst TAF category VFR / MVFR / IFR / LIFR | 3.5 / 11 / 24 / 29 % | 6.7 / 15 / 21 / 29 % | no TAF |
 | AUC of the last 24 hours' mean departure delay | 0.63 | 0.61 | 0.61 |
+| AUC of GFS MOS's highest 6-hour precipitation probability (2019 →) | 0.77 | 0.76 | 0.71 |
+| AUC of NBM's highest 3-hour thunder probability (2019 →) | 0.70 | 0.69 | 0.66 |
 
 ## Caveats
 

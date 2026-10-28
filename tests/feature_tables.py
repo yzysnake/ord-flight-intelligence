@@ -24,6 +24,21 @@ TAF = {
     "has_thunder": pl.Boolean(), "tempo_thunder": pl.Boolean(), "prob_thunder": pl.Boolean(),
     "has_snow": pl.Boolean(), "tempo_snow": pl.Boolean(), "prob_pct": pl.Int32(),
 }  # fmt: skip
+GFS_MOS = {
+    "runtime": UTC_TS, "known_time": UTC_TS, "valid_time": UTC_TS,
+    "flight_category": pl.String(), "ceiling_category": pl.Int32(),
+    "visibility_category": pl.Int32(), "wind_speed_kt": pl.Int32(), "snow_pct": pl.Int32(),
+    "freezing_pct": pl.Int32(), "thunder_6h_pct": pl.Int32(), "severe_6h_pct": pl.Int32(),
+    "pop_6h_pct": pl.Int32(),
+}  # fmt: skip
+NBM = {
+    "runtime": UTC_TS, "known_time": UTC_TS, "valid_time": UTC_TS,
+    "flight_category": pl.String(), "ceiling_ft": pl.Int32(), "visibility_mi": pl.Float64(),
+    "ifr_ceiling_pct": pl.Int32(), "ifr_visibility_pct": pl.Int32(), "snow_pct": pl.Int32(),
+    "freezing_pct": pl.Int32(), "sleet_pct": pl.Int32(), "wind_speed_kt": pl.Int32(),
+    "wind_gust_kt": pl.Int32(), "thunder_3h_pct": pl.Int32(), "pop_6h_pct": pl.Int32(),
+    "snow_6h_in": pl.Float64(), "ice_6h_in": pl.Float64(),
+}  # fmt: skip
 VERSIONS = {
     "program_id": pl.String(), "airport": pl.String(), "program_type": pl.String(),
     "scope": pl.String(), "version": pl.Int64(), "start_utc": UTC_TS, "end_utc": UTC_TS,
@@ -64,6 +79,8 @@ def tables(
     *,
     weather: Iterable[Row] = (),
     taf: Iterable[Row] = (),
+    gfs_mos: Iterable[Row] = (),
+    nbm: Iterable[Row] = (),
     versions: Iterable[Row] = (),
     programs: Iterable[Row] = (),
     legs: Iterable[Row] = (),
@@ -73,6 +90,8 @@ def tables(
         calendar=calendar(first - timedelta(days=2), 7),
         weather=pl.DataFrame(list(weather), schema=WEATHER),
         taf=pl.DataFrame(list(taf), schema=TAF),
+        gfs_mos=pl.DataFrame(list(gfs_mos), schema=GFS_MOS),
+        nbm=pl.DataFrame(list(nbm), schema=NBM),
         program_versions=pl.DataFrame(list(versions), schema=VERSIONS),
         programs=pl.DataFrame(list(programs), schema=PROGRAMS),
         legs=pl.DataFrame(list(legs), schema=LEGS).select(LEG_COLUMNS),

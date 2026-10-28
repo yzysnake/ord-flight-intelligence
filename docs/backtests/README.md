@@ -104,6 +104,8 @@ Run `baselines-2024-09-to-2026-08`: 24 test months, Sep 2024 – Aug 2026, in 3.
 
 `ordfi.models.gbdt`: one LightGBM classifier per task and horizon, refit for every test month (study §6.4). It runs on the three hourly tasks (T1); the daily outlook below uses the same model on the days spine.
 
+> **Since the station guidance was added, `gbdt` also reads GFS MOS and NBM (86 hourly and 94 daily features).** The results in this section and the next two are for the model before it, scored now as `gbdt_no_guidance`. The current model's results are under *Station guidance* below.
+
 - **Inputs:** all 59 features of the hours spine (`docs/features/`), as known at `as_of`. Booleans become 0/1 and flight categories their rank (LIFR lowest); missing values stay missing.
 - **Number of trees:** the last 12 training months are held out, after a one-day embargo. Early stopping on their log loss picks the number of trees (at most 2,000, patience 100), and the trees are then refit on the whole training window.
 - **Recalibration:** a logistic (Platt) map, fitted on the held-out months' forecasts, sets the forecasts' level. Event rates drift: GDPs covered 0.9–1.6 % of hours in 2022–24, against 2.7–7.0 % in 2015–19 and 3.5–6.3 % in 2025–26.
@@ -348,3 +350,78 @@ Run `outlook-track-record-2024-09-to-2026-08`, the six outlook tasks on the same
 - **The rule needs a year of forecasts with published outcomes before its first alert.** Live, the outlook must run (or be backfilled) for 14 months first.
 - **With the lag, a trend always leads the threshold.** The record ends three months before the alert, and disruption at ORD has risen since 2023. Targeting the budget with a margin, or a threshold set on the latest forecasts' own expected false alarms (which needs no outcomes), are the next candidates. Both must be chosen on the development months.
 - **A month's threshold is one number for all its hours or days.** A seasonal threshold would need several years of record.
+
+## Station guidance (GFS MOS and NBM)
+
+The outlook GBDT reads the `mos_` and `nbm_` features (`docs/features/`): GFS MOS from 2014-12 and NBM from 2018-11, for the target hour or day, from the latest run known at `as_of`. They are the only forecast weather beyond the TAF's 30 hours. `gbdt_no_guidance` is the model without them, which is the model of the sections above.
+
+### Adopted on the development months
+
+On the development months (Sep 2022 – Aug 2024), the guidance added skill almost everywhere. Summed over the task-horizons:
+
+- hourly, from 5.005 to 5.294;
+- daily, from 1.981 to 3.004.
+
+| Daily task | `d3_1900` | `d2_1900` | `d1_0700` | `d1_1900` | `d0_0500` |
+|---|---|---|---|---|---|
+| `day_bad60` | 0.027 → 0.139 | 0.033 → 0.170 | 0.091 → 0.173 | 0.207 → 0.235 | 0.221 → 0.248 |
+| `day_gdp` | 0.102 → 0.137 | 0.083 → 0.171 | 0.112 → 0.164 | 0.246 → 0.274 | 0.274 → 0.270 |
+| `day_ground_stop` | 0.003 → 0.124 | 0.031 → 0.189 | 0.089 → 0.208 | 0.217 → 0.241 | 0.244 → 0.263 |
+
+Hourly, the gains were 0.01–0.06 at 24 h and 6 h for every task, and ground stops gained at every horizon. Calibration errors stayed near the targets (at most 0.032).
+
+### Results
+
+Run `outlook-guidance-2024-09-to-2026-08`: the six outlook tasks on the same 24 test months, with every model and the track-record alerts, in 18 minutes. Brier skill against the calendar climatology, with the 95 % interval:
+
+| Task (base rate) | Horizon | With guidance | Without | Gain |
+|---|---|---|---|---|
+| `hour_bad60` (14.3 %) | 24 h | 0.297 [0.244, 0.341] | 0.249 | +0.047 |
+| | 6 h | 0.445 [0.381, 0.493] | 0.431 | +0.014 |
+| `hour_gdp` (3.9 %) | 24 h | 0.177 [0.122, 0.220] | 0.141 | +0.036 |
+| | 6 h | 0.321 [0.243, 0.374] | 0.292 | +0.030 |
+| `hour_ground_stop` (3.2 %) | 24 h | 0.135 [0.097, 0.167] | 0.089 | +0.046 |
+| | 6 h | 0.165 [0.126, 0.206] | 0.146 | +0.020 |
+| `day_bad60` (13.7 %) | `d3_1900` | 0.229 [0.159, 0.284] | 0.036 | +0.193 |
+| | `d2_1900` | 0.250 [0.186, 0.305] | 0.046 | +0.204 |
+| | `d1_0700` | 0.293 [0.216, 0.355] | 0.208 | +0.085 |
+| | `d1_1900` | 0.341 [0.262, 0.405] | 0.354 | −0.014 |
+| | `d0_0500` | 0.430 [0.342, 0.498] | 0.419 | +0.011 |
+| `day_gdp` (14.4 %) | `d3_1900` | 0.149 [0.103, 0.199] | 0.023 | +0.126 |
+| | `d2_1900` | 0.212 [0.148, 0.269] | 0.024 | +0.188 |
+| | `d1_0700` | 0.217 [0.156, 0.272] | 0.131 | +0.086 |
+| | `d1_1900` | 0.264 [0.196, 0.324] | 0.249 | +0.015 |
+| | `d0_0500` | 0.289 [0.213, 0.360] | 0.305 | −0.016 |
+| `day_ground_stop` (18.8 %) | `d3_1900` | 0.174 [0.121, 0.239] | 0.015 | +0.159 |
+| | `d2_1900` | 0.217 [0.162, 0.282] | 0.028 | +0.189 |
+| | `d1_0700` | 0.238 [0.181, 0.296] | 0.164 | +0.074 |
+| | `d1_1900` | 0.302 [0.237, 0.371] | 0.266 | +0.036 |
+| | `d0_0500` | 0.324 [0.256, 0.392] | 0.302 | +0.022 |
+
+**Findings:**
+
+- **Two and three days ahead, the guidance is the outlook.**
+  - Bad days score 0.250 and 0.229, up from 0.046 and 0.036.
+  - GDP and ground-stop days gain 0.13–0.19.
+  - Without the guidance, those issues barely beat the calendar.
+- **The morning before gains most among the day-before issues.** That is when the TAF reaches only noon: bad days go from 0.208 to 0.293.
+- **The evening before and on the day, the TAF already covers the day.** The guidance changes skill by 0.01–0.04, within the intervals.
+- **Hourly, the gains are mostly at 24 h and 6 h** (+0.014 to +0.047). Within 3 hours they shrink to 0.00–0.02, as the in-day state takes over.
+- **The TAF and the guidance overlap.** Hourly at 24 h, bad hours lose nothing without the TAF (0.301) once the guidance is in, and the guidance is worth 0.047 without it. The evening before, the TAF still adds 0.03 for bad days.
+- **The v0.1 Outlook targets** (above 0.10 at 24 h and 0.25 at 6 h, calibration error at most 0.03):
+  - Bad hours meet them (0.297 and 0.445).
+  - GDP hours meet them (0.177 and 0.321), and the 24 h interval now clears 0.10.
+  - Ground-stop hours reach the 24 h target (0.135) but not the 6 h one (0.165).
+  - Hourly calibration errors are at most 0.014.
+- **The bad-day criterion two days ahead,** with each month's alert threshold set on its track record:
+  - The alert catches 59 % of bad days at 0.97 false alarms per 10 normal days, and half its flags are right (49 %).
+  - That is within the false-alarm budget and one point short of 60 %, by a forecast issued at least 24 h before every one of the day's flights. Without the guidance, the same alert caught 21 %.
+  - The morning before, it catches 75 % at 1.22 false alarms per 10 (71 % at 1.67 without the guidance). The evening before, 77 % at 1.14.
+
+**Caveats:**
+
+- **NBM is short.** It starts in 2018-11 and its IFR probabilities in 2020-09, so the early training years have only GFS MOS.
+- **NBM changed versions often** (v4.0 2020-09 to v5.0 2026-05), and the model cannot see which version a row came from.
+- **The knowledge times are the catalog cards' estimates,** not measured on IEM's feed: the GFS MOS run + 5 h (conservative) and the NBM cycle + 70 min.
+- **Three days ahead, GFS MOS reaches only about midday** of the target day.
+- **Daily GDP and ground-stop days are still miscalibrated** (errors 0.035–0.057): they doubled in the reported months against the years the models learned from.

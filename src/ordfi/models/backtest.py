@@ -78,15 +78,18 @@ def _departure_models() -> list[Model]:
             baselines.persistence(), baselines.slack_rule()]  # fmt: skip
 
 
+# Feature groups left out, one ablation each: their value to the outlook (study §6.5).
+ABLATIONS = {"taf": ("taf_",), "guidance": ("mos_", "nbm_"), "atc": ("atc_",), "ops": ("ops_",)}
+
+
 def _outlook_models(spine: str, *baseline: Model) -> list[Model]:
     """The baselines, then the Outlook GBDT on the spine's features: on the schedule alone
-    (calendar and demand), on every feature, and without each of the TAF, the FAA programs and
-    the operations."""
+    (calendar and demand), on every feature, and without each of the TAF, the station
+    guidance, the FAA programs and the operations."""
     ablations = [
-        gbdt.outlook(f"gbdt_no_{left_out.rstrip('_')}",
-                     [g for g in gbdt.GROUPS if g != left_out], spine)
-        for left_out in ("taf_", "atc_", "ops_")
-    ]  # fmt: skip
+        gbdt.outlook(f"gbdt_no_{name}", [g for g in gbdt.GROUPS if g not in left_out], spine)
+        for name, left_out in ABLATIONS.items()
+    ]
     return [*baseline, gbdt.outlook("gbdt_schedule", ("cal_", "dem_"), spine),
             gbdt.outlook(spine=spine), *ablations]  # fmt: skip
 

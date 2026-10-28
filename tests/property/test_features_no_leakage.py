@@ -81,6 +81,42 @@ def forecasts(draw: st.DrawFn) -> list[dict[str, object]]:
 
 
 @st.composite
+def guidance_runs(draw: st.DrawFn, lag_min: int, nbm: bool) -> list[dict[str, object]]:
+    """A few runs of 3-hourly projections, known ``lag_min`` after their run time."""
+    rows: list[dict[str, object]] = []
+    hours = st.integers(-24, 36)  # runs from a day before the world into it
+    for hour in draw(st.lists(hours, max_size=3, unique=True)):
+        runtime = BASE + timedelta(hours=hour)
+        for lead in range(6, 73, 3):
+            row: dict[str, object] = {
+                "runtime": runtime,
+                "known_time": runtime + timedelta(minutes=lag_min),
+                "valid_time": runtime + timedelta(hours=lead),
+                "flight_category": draw(categories),
+                "wind_speed_kt": draw(st.integers(0, 30)),
+                "snow_pct": draw(st.none() | st.integers(0, 100)),
+                "freezing_pct": draw(st.none() | st.integers(0, 100)),
+                "pop_6h_pct": draw(st.none() | st.integers(0, 100)),
+            }
+            if nbm:
+                ceiling = draw(st.none() | st.integers(1, 50))  # 100s of ft; None unlimited
+                row |= {
+                    "ceiling_ft": None if ceiling is None else 100 * ceiling,
+                    "visibility_mi": draw(st.floats(0, 10)),
+                    "ifr_ceiling_pct": draw(st.integers(0, 100)),
+                    "thunder_3h_pct": draw(st.none() | st.integers(0, 100)),
+                    "wind_gust_kt": draw(st.none() | st.integers(10, 50)),
+                }
+            else:
+                row |= {
+                    "ceiling_category": draw(st.integers(1, 8)),
+                    "thunder_6h_pct": draw(st.none() | st.integers(0, 100)),
+                }
+            rows.append(row)
+    return rows
+
+
+@st.composite
 def program_versions(draw: st.DrawFn) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     for p in range(draw(st.integers(0, 4))):
@@ -146,6 +182,8 @@ def worlds(draw: st.DrawFn) -> Tables:
         BASE.date(),
         weather=draw(observations()),
         taf=draw(forecasts()),
+        gfs_mos=draw(guidance_runs(5 * 60, nbm=False)),
+        nbm=draw(guidance_runs(70, nbm=True)),
         versions=draw(program_versions()),
         legs=draw(flights()),
     )

@@ -176,6 +176,7 @@ def test_run_writes_one_file_per_horizon_and_month(tmp_path: Path) -> None:
     core = tmp_path / "core"
     core.mkdir()
     names = {"calendar": t.calendar, "weather_obs": t.weather, "taf_hourly": t.taf,
+             "gfs_mos": t.gfs_mos, "nbm": t.nbm,
              "atc_program_interval_version": t.program_versions,
              "atc_program_interval": t.programs, "flight_leg": t.legs}  # fmt: skip
     for name, frame in names.items():

@@ -27,6 +27,23 @@ INBOUND_WINDOW = timedelta(hours=24)
 PREVIOUS_DAY = timedelta(hours=24)
 FAR_FUTURE = pl.lit(datetime(9999, 1, 1, tzinfo=UTC), dtype=pl.Datetime("us", "UTC"))
 FLIGHT_CATEGORIES = ("LIFR", "IFR", "MVFR", "VFR")  # worst first
+# Station guidance comes in 3-hourly projections: an instantaneous one stands for the 90 minutes
+# around it; a period element covers the hours before its valid time.
+NEAR = timedelta(minutes=90)
+# (column, aggregate) at the projections near the target, and (column, hours) of the periods.
+Instant = list[tuple[str, str]]
+Periods = list[tuple[str, int]]
+GUIDANCE: dict[str, tuple[str, Instant, Periods]] = {
+    "mos": ("gfs_mos",
+            [("ceiling_category", "min"), ("visibility_category", "min"),
+             ("wind_speed_kt", "max"), ("snow_pct", "max"), ("freezing_pct", "max")],
+            [("thunder_6h_pct", 6), ("severe_6h_pct", 6), ("pop_6h_pct", 6)]),
+    "nbm": ("nbm",
+            [("ceiling_ft", "min"), ("visibility_mi", "min"), ("ifr_ceiling_pct", "max"),
+             ("ifr_visibility_pct", "max"), ("snow_pct", "max"), ("freezing_pct", "max"),
+             ("sleet_pct", "max"), ("wind_speed_kt", "max"), ("wind_gust_kt", "max")],
+            [("thunder_3h_pct", 3), ("pop_6h_pct", 6), ("snow_6h_in", 6), ("ice_6h_in", 6)]),
+}  # fmt: skip
 
 
 def _minutes(duration: pl.Expr) -> pl.Expr:
@@ -189,6 +206,76 @@ def day_taf(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
         taf_day_worst_flight_category=pl.col("worst_rank").replace_strict(category, default=None),
     ).drop("newest_sent", "prevailing_rank", "worst_rank")
     return _per_key(spine, features, ["as_of", "target_utc", "target_end_utc"])
+
+
+def guidance(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
+    """GFS MOS (``mos_``) and NBM (``nbm_``) station guidance for the target hour (or day), each
+    3-hourly projection from the latest run known at as_of. Instantaneous elements come from the
+    projections within 90 minutes of the target: the worst flight category, the lowest ceiling
+    and visibility, the strongest wind and gust, and the highest precipitation-type and IFR
+    probabilities. Thunder, precipitation, snow and ice come from the periods overlapping it.
+    Also how many projections cover the target, and the newest run's age. Null beyond the
+    guidance's 72 hours, and for NBM before it starts (2018-11)."""
+    end = (pl.col("target_end_utc") if "target_end_utc" in spine.columns
+           else pl.col("target_utc") + timedelta(hours=1))  # fmt: skip
+    rows = spine.with_columns(window_end=end)
+    keys = rows.select("as_of", "target_utc", "window_end").unique()
+    on = ["as_of", "target_utc", "window_end"]
+    for prefix, (table, instant, periods) in GUIDANCE.items():
+        found = _guidance(keys, getattr(tables, table), prefix, instant, periods)
+        keys = keys.join(found, on=on, how="left").with_columns(
+            pl.col(f"{prefix}_projections").fill_null(0)
+        )
+    return _per_key(rows, keys, on)
+
+
+def _guidance(keys: pl.DataFrame, frame: pl.DataFrame, prefix: str, instant: Instant,
+              periods: Periods) -> pl.DataFrame:  # fmt: skip
+    """One model's guidance features for each (as_of, target window)."""
+    on = ["as_of", "target_utc", "window_end"]
+    longest = timedelta(hours=max(hours for _, hours in periods))
+    candidates = keys.with_columns(
+        lo=pl.col("target_utc") - NEAR, hi=pl.col("window_end") + longest
+    ).join_where(
+        frame,
+        pl.col("known_time") <= pl.col("as_of"),
+        pl.col("valid_time") >= pl.col("lo"),
+        pl.col("valid_time") < pl.col("hi"),
+    )
+    # Each projection from the latest run known at as_of.
+    latest = candidates.filter(
+        pl.col("known_time") == pl.col("known_time").max().over([*on, "valid_time"])
+    )
+    near = (pl.col("valid_time") < pl.col("window_end") + NEAR).alias("near")
+    overlap = {hours: ((pl.col("valid_time") > pl.col("target_utc"))
+                       & (pl.col("valid_time") - timedelta(hours=hours) < pl.col("window_end")))
+                      .alias(f"overlap_{hours}")
+               for hours in {hours for _, hours in periods}}  # fmt: skip
+    rank = {name: i for i, name in enumerate(FLIGHT_CATEGORIES)}
+    marked = latest.with_columns(
+        near, *overlap.values(),
+        category_rank=pl.col("flight_category").replace_strict(rank, default=None),
+    )  # fmt: skip
+    aggregates = [
+        pl.col("near").sum().alias(f"{prefix}_projections"),
+        pl.col("runtime").max().alias("newest_run"),
+        pl.col("category_rank").filter(pl.col("near")).min().alias("worst_rank"),
+        *(getattr(pl.col(column).filter(pl.col("near")), how)().alias(f"{prefix}_{column}")
+          for column, how in instant),
+        *(pl.col(column).filter(pl.col(f"overlap_{hours}")).max().alias(f"{prefix}_{column}")
+          for column, hours in periods),
+    ]  # fmt: skip
+    category = dict(enumerate(FLIGHT_CATEGORIES))
+    return (
+        marked.group_by(on)
+        .agg(aggregates)
+        .with_columns(
+            pl.col("worst_rank").replace_strict(category, default=None)
+            .alias(f"{prefix}_flight_category"),
+            _minutes(pl.col("as_of") - pl.col("newest_run")).alias(f"{prefix}_age_min"),
+        )
+        .drop("worst_rank", "newest_run")
+    )  # fmt: skip
 
 
 def _versions(tables: Tables) -> pl.DataFrame:
