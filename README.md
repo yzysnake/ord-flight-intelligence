@@ -54,6 +54,12 @@ Build point-in-time feature snapshots from the core tables (see [`docs/features/
 make features SPINE=departures FROM=2015-01 TO=2026-08   # also SPINE=hours
 ```
 
+Backtest the baselines on rolling monthly origins (see [`docs/backtests/`](docs/backtests/README.md)):
+
+```bash
+make backtest FROM=2024-09 TO=2026-08
+```
+
 Archive the live feeds that have no public history (FAA NAS Status, ORD D-ATIS, CBP customs waits):
 
 ```bash
@@ -76,6 +82,7 @@ To use the environment in PyCharm: *Settings → Project → Python Interpreter 
 | `docs/adr/` | Architecture decision records |
 | `docs/data-catalog/` | One card per data source: licence, cadence, knowledge-time rule |
 | `docs/features/` | As-of feature snapshots: spines, knowledge-time rules, feature groups |
+| `docs/backtests/` | Backtest protocol, tasks, baselines and their scores |
 | `docs/model-cards/` | One card per released model |
 | `infra/` | Deployment configuration |
 | `data/` | Local data mirror (git-ignored) |

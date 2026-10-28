@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Backtest harness (`ordfi.models.backtest`, `make backtest`). It uses rolling monthly origins, and each fold trains only on months BTS had published (up to M − 3), with the COVID months left out.
+  - Scores: Brier skill against the calendar climatology, with intervals from resampling whole days; log loss; ROC and PR AUC; calibration (ECE, slope and intercept) with reliability bins.
+  - Results are split by season, program days, storm days, the FAA cap and month.
+- Climatology baselines (`ordfi.models.baselines`): base rate, calendar, route, persistence, slack rule and announced programs. They cover six tasks: departures 15+ or 60+ min late, cancellations, bad hours, and GDP and ground-stop hours (see `docs/backtests/`).
 - As-of feature builder (`ordfi.features`, `make features`): point-in-time snapshots for every scheduled ORD departure and every hour at the 24 h, 6 h, 3 h, 1 h and 15 min horizons, 2015 →.
   - Feature groups: calendar, METAR, TAF, ATC programs, recent ORD operations, scheduled demand, and the flight and its inbound aircraft. Labels are kept separate.
   - Knowledge-time rules live in one module, with a `visible(tables, as_of)` view.
@@ -69,6 +73,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- mypy skips scikit-learn imports, which ship no type information.
 - Flight-category logic is a shared dbt macro, used by `weather_obs`, `weather_obs_hourly` and `taf_hourly`.
 - `flight_leg` reads from `int_bts_legs`. Tail numbers are upper-cased, and placeholders shorter than 4 characters become null.
 - dbt core outputs use zstd compression (about a third smaller).
