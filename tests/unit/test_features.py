@@ -1,5 +1,6 @@
 """As-of features on hand-built inputs: what each group reports, the labels and the CLI run."""
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -189,4 +190,32 @@ def test_run_writes_one_file_per_horizon_and_month(tmp_path: Path) -> None:
     six = pl.read_parquet(tmp_path / "features/departures/horizon=6h/2019-07.parquet")
     assert six.select("flight_key", "as_of", "inb_found", "y_no_tail", "licence_class").rows() == [
         ("out", at(12), False, False, "public-domain")
+    ]
+
+
+def test_program_climate_counts_recent_days_as_known() -> None:
+    def gdp(program: str, start: datetime, end: datetime, known: datetime,
+            kind: str = "gdp") -> dict[str, object]:  # fmt: skip
+        return {"program_id": program, "airport": "ORD", "program_type": kind,
+                "scope": "general", "version": 1, "start_utc": start, "end_utc": end,
+                "known_time": known}  # fmt: skip
+
+    versions = [
+        gdp("a", at(13, day=10), at(18, day=10), at(12, day=10)),
+        gdp("b", at(20, day=14), at(2, day=15), at(19, day=14)),  # one local day: the 14th
+        gdp("old", at(13, day=5), at(18, day=5), at(12, day=5)),
+        gdp("late", at(13, day=12), at(18, day=12), at(13)),  # first known after as_of
+        gdp("stop", at(10), at(11), at(9, 55), kind="ground_stop"),
+    ]
+    t = tables(DAY, versions=versions)
+    t = replace(t, program_versions=t.program_versions.with_columns(
+        pl.when(pl.col("program_id") == "old").then(pl.col("start_utc") - timedelta(days=31))
+        .otherwise(pl.col("start_utc")).alias("start_utc"),
+        pl.when(pl.col("program_id") == "old").then(pl.col("end_utc") - timedelta(days=31))
+        .otherwise(pl.col("end_utc")).alias("end_utc"),
+    ))  # fmt: skip
+    got = build.features("hours", spine((at(12), at(13)), (at(9), at(13))), t)
+    assert pick(got, "atc_gdp_days_7d", "atc_gdp_days_30d", "atc_gs_days_7d") == [
+        (2, 2, 1),  # the 10th and the 14th; "old" is 41 days back; "late" not yet known
+        (2, 2, 0),  # the ground stop is known only at 09:55
     ]

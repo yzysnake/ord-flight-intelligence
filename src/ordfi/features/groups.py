@@ -21,6 +21,10 @@ Group = Callable[[pl.DataFrame, Tables], pl.DataFrame]
 LOCAL_TZ = "America/Chicago"
 RECENT_WEATHER = timedelta(hours=3)
 PROGRAM_COUNT_WINDOW = timedelta(hours=24)
+# Days of recent program activity: how often ORD has had programs lately (the program climate).
+PROGRAM_CLIMATE_DAYS = (7, 30)
+PROGRAM_CLIMATE = [f"atc_{kind}_days_{days}d" for kind in ("gdp", "gs")
+                   for days in PROGRAM_CLIMATE_DAYS]  # fmt: skip
 # A program version with no end stated (an open ground stop) is assumed to last this long.
 OPEN_PROGRAM = timedelta(hours=2)
 INBOUND_WINDOW = timedelta(hours=24)
@@ -351,13 +355,50 @@ def _programs(spine: pl.DataFrame, tables: Tables, target: list[str], at_target:
         keys.drop("after")
         .join(state, on=["as_of", *target], how="left")
         .join(issued, on="as_of", how="left")
+        .join(_program_days(keys.select("as_of").unique(), versions), on="as_of", how="left")
     )
     flags = [c for c in features.columns if c.endswith(("_now", "_at_target"))]
-    counts = ["atc_gdp_issued_24h", "atc_gs_issued_24h"]
+    counts = ["atc_gdp_issued_24h", "atc_gs_issued_24h", *PROGRAM_CLIMATE]
     features = features.with_columns(
         *(pl.col(c).fill_null(False) for c in flags), *(pl.col(c).fill_null(0) for c in counts)
     )
     return _per_key(spine, features, ["as_of", *target])
+
+
+def _program_days(keys: pl.DataFrame, versions: pl.DataFrame) -> pl.DataFrame:
+    """The local days, among the last 7 and 30 before as_of, with a general GDP (ground stop)
+    in effect at some time, each program as known at as_of. Advisories are known as they are
+    sent, so these follow a change in how often programs are run (staffing, construction) days
+    after it starts, not months."""
+    longest = timedelta(days=max(PROGRAM_CLIMATE_DAYS))
+    known = (
+        keys.with_columns(since=pl.col("as_of") - longest)
+        .join_where(
+            versions.filter(pl.col("end_assumed") > pl.col("start_utc")),
+            pl.col("known_time") <= pl.col("as_of"),
+            pl.col("end_assumed") > pl.col("since"),
+            pl.col("start_utc") < pl.col("as_of"),
+        )
+        .filter(pl.col("valid_until") > pl.col("as_of"))
+    )
+    out = keys
+    for days in PROGRAM_CLIMATE_DAYS:
+        start = pl.max_horizontal("start_utc", pl.col("as_of") - timedelta(days=days))
+        end = pl.min_horizontal("end_assumed", "as_of") - timedelta(microseconds=1)
+        in_window = known.filter(pl.col("end_assumed") > pl.col("as_of") - timedelta(days=days))
+        touched = in_window.select(
+            "as_of", "program_type",
+            day=pl.date_ranges(start.dt.convert_time_zone(LOCAL_TZ).dt.date(),
+                               end.dt.convert_time_zone(LOCAL_TZ).dt.date()),
+        ).explode("day")  # fmt: skip
+        counted = touched.group_by("as_of").agg(
+            pl.col("day").filter(pl.col("program_type") == "gdp").n_unique()
+            .alias(f"atc_gdp_days_{days}d"),
+            pl.col("day").filter(pl.col("program_type") == "ground_stop").n_unique()
+            .alias(f"atc_gs_days_{days}d"),
+        )  # fmt: skip
+        out = out.join(counted, on="as_of", how="left")
+    return out
 
 
 def _recent_counts(

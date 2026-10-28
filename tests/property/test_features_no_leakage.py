@@ -210,7 +210,8 @@ def check(spine_name: str, tables: Tables, picks: list[int]) -> None:
 
 picks = st.lists(st.integers(min_value=0, max_value=10_000), min_size=1, max_size=5)
 relaxed = settings(deadline=None, max_examples=30, suppress_health_check=[HealthCheck.too_slow])
-# A day's features touch the hours around as_of less often, so leaks need more worlds to show.
+# A day's features, and the program climate, depend on fewer of the world's events, so leaks
+# need more worlds to show.
 thorough = settings(relaxed, max_examples=60)
 
 
@@ -220,7 +221,7 @@ def test_departure_features_use_only_what_was_known(tables: Tables, rows: list[i
     check("departures", tables, rows)
 
 
-@relaxed
+@thorough
 @given(worlds(), picks)
 def test_hour_features_use_only_what_was_known(tables: Tables, rows: list[int]) -> None:
     check("hours", tables, rows)

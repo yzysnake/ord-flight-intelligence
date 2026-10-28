@@ -42,6 +42,7 @@ from ordfi.models.metrics import reliability, scores, skill
 from ordfi.settings import data_dir
 
 LABEL_LAG = 2  # months between the last training month and the test month (BTS release lag)
+ADVISORY_LAG = 0  # labels from FAA advisories are known the day they happen
 EXCLUDED = (date(2020, 3, 1), date(2021, 6, 1))  # COVID: left out of training (months, inclusive)
 CAP = (date(2026, 6, 2), date(2027, 10, 30))  # FAA ORD operations cap, its own regime
 REFERENCE = "calendar"
@@ -54,7 +55,6 @@ BAD_DAY_MIN_DEPARTURES = 100
 # Months of track record behind each test month's alerts and recalibration, ending at the last
 # month with published outcomes (chosen on the development months: docs/backtests/).
 TRACK_RECORD = 12
-RECORD_LAG = LABEL_LAG + 1
 RECALIBRATED = ("gbdt",)  # models also scored recalibrated on their track record
 
 
@@ -67,6 +67,7 @@ class Task:
     rows: pl.Expr = field(default_factory=lambda: pl.lit(True))  # spine rows scored
     description: str = ""
     track_record: bool = False  # alerts and recalibration from each month's track record
+    label_lag: int = LABEL_LAG  # months between the last training month and the test month
 
 
 def _late(minutes: int) -> pl.Expr:
@@ -78,28 +79,33 @@ def _departure_models() -> list[Model]:
             baselines.persistence(), baselines.slack_rule()]  # fmt: skip
 
 
-# Feature groups left out, one ablation each: their value to the outlook (study §6.5).
-ABLATIONS = {"taf": ("taf_",), "guidance": ("mos_", "nbm_"), "atc": ("atc_",), "ops": ("ops_",)}
+# Features left out (by prefix), one ablation each: their value to the outlook (study §6.5).
+CLIMATE = ("atc_gdp_days_", "atc_gs_days_")
+ABLATIONS = {
+    "taf": ("taf_",), "guidance": ("mos_", "nbm_"), "atc": ("atc_",), "climate": CLIMATE,
+    "ops": ("ops_",),
+}  # fmt: skip
 
 
-def _outlook_models(spine: str, *baseline: Model) -> list[Model]:
-    """The baselines, then the Outlook GBDT on the spine's features: on the schedule alone
-    (calendar and demand), on every feature, and without each of the TAF, the station
-    guidance, the FAA programs and the operations."""
-    ablations = [
-        gbdt.outlook(f"gbdt_no_{name}", [g for g in gbdt.GROUPS if g not in left_out], spine)
-        for name, left_out in ABLATIONS.items()
-    ]
+def _outlook_models(spine: str, *baseline: Model, without: tuple[str, ...] = ()) -> list[Model]:
+    """The baselines, then the Outlook GBDT on the spine's features less ``without``: on the
+    schedule alone (calendar and demand), on every feature, and without each of the TAF, the
+    station guidance, the FAA programs, the recent program climate and the operations."""
+    ablations = [gbdt.outlook(f"gbdt_no_{name}", spine=spine, without=(*without, *left_out))
+                 for name, left_out in ABLATIONS.items()
+                 if not set(left_out) <= set(without)]  # fmt: skip
     return [*baseline, gbdt.outlook("gbdt_schedule", ("cal_", "dem_"), spine),
-            gbdt.outlook(spine=spine), *ablations]  # fmt: skip
+            gbdt.outlook(spine=spine, without=without), *ablations]  # fmt: skip
 
 
-def _hour_models(*baseline: Model) -> list[Model]:
-    return _outlook_models("hours", baselines.base_rate(), baselines.calendar(), *baseline)
+def _hour_models(*baseline: Model, without: tuple[str, ...] = ()) -> list[Model]:
+    return _outlook_models("hours", baselines.base_rate(), baselines.calendar(), *baseline,
+                           without=without)  # fmt: skip
 
 
-def _day_models(*baseline: Model) -> list[Model]:
-    return _outlook_models("days", baselines.base_rate(), baselines.day_calendar(), *baseline)
+def _day_models(*baseline: Model, without: tuple[str, ...] = ()) -> list[Model]:
+    return _outlook_models("days", baselines.base_rate(), baselines.day_calendar(), *baseline,
+                           without=without)  # fmt: skip
 
 
 TASKS = {
@@ -112,7 +118,8 @@ TASKS = {
         Task("dep_cancelled", "departures", pl.col("y_cancelled"), _departure_models,
              description="An ORD departure is cancelled (T5)"),
         Task("hour_bad60", "hours", pl.col("y_late60_share") >= BAD_HOUR_SHARE,
-             lambda: _hour_models(baselines.persistence()),
+             # The program climate did not help the delay events on the development months.
+             lambda: _hour_models(baselines.persistence(), without=CLIMATE),
              rows=pl.col("y_n_departures") >= BAD_HOUR_MIN_DEPARTURES,
              description="20 %+ of an hour's ORD departures leave 60+ min late or are cancelled "
                          "(hours with 10+ departures; T1)", track_record=True),
@@ -125,7 +132,7 @@ TASKS = {
              description="A general ORD ground stop is in effect during the hour (T1)",
              track_record=True),
         Task("day_bad60", "days", pl.col("y_late60_share") >= BAD_DAY_SHARE,
-             lambda: _day_models(baselines.day_persistence()),
+             lambda: _day_models(baselines.day_persistence(), without=CLIMATE),
              rows=pl.col("y_n_departures") >= BAD_DAY_MIN_DEPARTURES,
              description="A bad day: 20 %+ of a local day's ORD departures leave 60+ min late or "
                          "are cancelled (T1)", track_record=True),
@@ -146,9 +153,10 @@ def add_months(month: date, n: int) -> date:
     return date(index // 12, index % 12 + 1, 1)
 
 
-def training_months(test: date, available: list[date]) -> list[date]:
-    """Months a model forecasting ``test`` may learn from: published by then, COVID left out."""
-    last = add_months(test, -(LABEL_LAG + 1))
+def training_months(test: date, available: list[date], lag: int = LABEL_LAG) -> list[date]:
+    """Months a model forecasting ``test`` may learn from: their labels known by then (``lag``
+    months between the last of them and ``test``), COVID left out."""
+    last = add_months(test, -(lag + 1))
     return [m for m in available if m <= last and not EXCLUDED[0] <= m <= EXCLUDED[1]]
 
 
@@ -182,12 +190,12 @@ def models_for(task: Task, names: Sequence[str] | None = None) -> list[Model]:
     return models if names is None else [m for m in models if m.name in {*names, REFERENCE}]
 
 
-def _fold(key: str, models: list[Model], frame: pl.DataFrame, horizon: str,
+def _fold(key: str, models: list[Model], frame: pl.DataFrame, horizon: str, lag: int,
           month: date) -> list[pl.DataFrame]:  # fmt: skip
     """Every model's forecasts for one test month at one horizon."""
     available = frame["month"].unique().sort().to_list()
     test = frame.filter(pl.col("month") == month)
-    train = frame.filter(pl.col("month").is_in(training_months(month, available)))
+    train = frame.filter(pl.col("month").is_in(training_months(month, available, lag)))
     if test.is_empty() or train.is_empty():
         return []
     rows = test.select(key, "local_date", LABEL)
@@ -198,18 +206,19 @@ def _fold(key: str, models: list[Model], frame: pl.DataFrame, horizon: str,
     ]  # fmt: skip
 
 
-Inputs = tuple[str, list[Model], pl.DataFrame, str]  # key, models, rows and horizon of a fold
+# Key, models, rows, horizon and label lag of a fold.
+Inputs = tuple[str, list[Model], pl.DataFrame, str, int]
 _SHARED: dict[str, Inputs] = {}  # a worker process's inputs to every fold, set once per pool
 
 
 def _share(*inputs: Any) -> None:
-    key, models, frame, horizon = inputs
-    _SHARED["inputs"] = (key, models, frame, horizon)
+    key, models, frame, horizon, lag = inputs
+    _SHARED["inputs"] = (key, models, frame, horizon, lag)
 
 
 def _shared_fold(month: date) -> list[pl.DataFrame]:
-    key, models, frame, horizon = _SHARED["inputs"]
-    return _fold(key, models, frame, horizon, month)
+    key, models, frame, horizon, lag = _SHARED["inputs"]
+    return _fold(key, models, frame, horizon, lag, month)
 
 
 def predict(task: Task, horizons: list[str], test_months: list[date], root: Path,
@@ -217,7 +226,8 @@ def predict(task: Task, horizons: list[str], test_months: list[date], root: Path
     """Every model's forecasts for every test month and horizon, ``workers`` months at once."""
     parts = []
     for horizon in horizons:
-        inputs: Inputs = (_key(task), models, load(task, horizon, models, root), horizon)
+        frame = load(task, horizon, models, root)
+        inputs: Inputs = (_key(task), models, frame, horizon, task.label_lag)
         if workers == 1:
             folds = [_fold(*inputs, month) for month in test_months]
         else:
@@ -327,12 +337,13 @@ def run(task_name: str, horizons: list[str], test_months: list[date], root: Path
     task = TASKS[task_name]
     began = time.monotonic()
     chosen = models_for(task, models)
-    record = recent.warm_up(test_months[0], TRACK_RECORD, RECORD_LAG) if task.track_record else []
+    record_lag = task.label_lag + 1  # the record ends with the last month whose labels are known
+    record = recent.warm_up(test_months[0], TRACK_RECORD, record_lag) if task.track_record else []
     predictions = predict(task, horizons, record + test_months, root, chosen, workers)
     if task.track_record:
         names = [m.name for m in chosen if m.name in RECALIBRATED]
         recalibrated = recent.recalibrate(predictions, names, test_months, TRACK_RECORD,
-                                          RECORD_LAG)  # fmt: skip
+                                          record_lag)  # fmt: skip
         predictions = pl.concat([predictions, recalibrated])
     scored = predictions.filter(pl.col("test_month").is_in(test_months))
     metrics, bins = evaluate(scored, day_flags(root / "core"), _key(task))
@@ -344,14 +355,14 @@ def run(task_name: str, horizons: list[str], test_months: list[date], root: Path
     bins.write_parquet(out / "reliability.parquet")
     if task.track_record:
         own = predictions.filter(~pl.col("model").str.ends_with(recent.SUFFIX))
-        recent.alerts(own, test_months, TRACK_RECORD, RECORD_LAG).write_parquet(
+        recent.alerts(own, test_months, TRACK_RECORD, record_lag).write_parquet(
             out / "alerts.parquet"
         )
     (out / "run.json").write_text(json.dumps({
         "task": task.name, "description": task.description, "spine": task.spine,
         "horizons": horizons, "test_months": [m.isoformat() for m in test_months],
         "track_record_months": [m.isoformat() for m in record],
-        "label_lag_months": LABEL_LAG,
+        "label_lag_months": task.label_lag,
         "excluded_from_training": {"from": f"{EXCLUDED[0]:%Y-%m}", "to": f"{EXCLUDED[1]:%Y-%m}"},
         "reference": REFERENCE, "models": sorted(predictions["model"].unique().to_list()),
         "git_commit": _git_commit(), "seconds": round(time.monotonic() - began, 1),
