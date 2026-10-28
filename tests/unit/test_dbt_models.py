@@ -11,7 +11,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from ordfi.ingest import atcscc, iem, taf
+from ordfi.ingest import atcscc, iem, mos, taf
 from ordfi.ingest.http import Download
 from ordfi.ingest.raw import commit_download
 from ordfi.settings import project_root
@@ -171,6 +171,7 @@ def write_stage(root: Path) -> None:
         text(august5, 20, "05/1900Z - 05/2159Z"),
     ], {**atcscc.ADVISORY_SCHEMA, "licence_class": pl.String()})  # fmt: skip
     write_taf(root)
+    write_mos(root)
 
 
 # A routine TAF: VFR, then MVFR thunderstorms from 18Z with a TEMPO to IFR, then VFR.
@@ -198,6 +199,44 @@ def write_taf(root: Path) -> None:
     commit_download(root, taf.SOURCE_ID, "ORD/bulletins/2019-07", "b.txt", dl, "public-domain",
                     partition="ORD/2019")  # fmt: skip
     taf.stage_year(root, 2019)
+
+
+# GFS MOS: a ceiling below 500 ft, then visibility 2-3 mi, then clear. NBM in its 2019 codes
+# (whole miles, 888 unlimited, 999 none) and its 2021 codes (tenths, -88 unlimited).
+MOS_CSV = [
+    (mos.GFS, date(2019, 7, 1),
+     "runtime,ftime,model,cig,vis,t06_1,station\n"
+     "2019-07-15 00:00:00,2019-07-15 06:00:00,GFS,2,7,10.0,KORD\n"
+     "2019-07-15 00:00:00,2019-07-15 09:00:00,GFS,6,4,,KORD\n"
+     "2019-07-15 00:00:00,2019-07-15 12:00:00,GFS,8,7,30.0,KORD\n"),
+    (mos.NBS, date(2019, 7, 1),
+     "runtime,ftime,model,cig,vis,t03,station\n"
+     "2019-07-15 01:00:00,2019-07-15 06:00:00,NBS,888,12,5,KORD\n"
+     "2019-07-15 01:00:00,2019-07-15 09:00:00,NBS,8,2,-99,KORD\n"
+     "2019-07-15 01:00:00,2019-07-17 12:00:00,NBS,25,999,0,KORD\n"),
+    (mos.NBS, date(2021, 7, 1),
+     "runtime,ftime,model,cig,vis,t03,station\n"
+     "2021-07-15 01:00:00,2021-07-15 06:00:00,NBS,-88,100,5,KORD\n"
+     "2021-07-15 01:00:00,2021-07-15 09:00:00,NBS,8,25,-99,KORD\n"
+     "2021-07-15 01:00:00,2021-07-15 12:00:00,NBS,25,50,40,KORD\n"),
+]  # fmt: skip
+
+
+def write_mos(root: Path) -> None:
+    """Stage the guidance the way the pipeline does: raw monthly CSVs, then staging."""
+    for model, month, body in MOS_CSV:
+        payload = body.encode()
+        upload = root / f"upload-{model.code}-{month:%Y-%m}.csv"
+        upload.write_bytes(payload)
+        dl = Download(
+            url="https://example.test/mos.py", tmp_path=upload, fetched_at=FETCHED, status=200,
+            sha256=hashlib.sha256(payload).hexdigest(), size_bytes=len(payload),
+            content_type="text/csv", last_modified=None, etag=None,
+        )  # fmt: skip
+        commit_download(root, mos.SOURCE_ID, mos.month_key(model, month),
+                        f"{model.code}-{month:%Y-%m}.csv", dl, "public-domain",
+                        partition=f"KORD/{model.code}/{month:%Y}")  # fmt: skip
+        mos.stage_year(root, model, month.year)
 
 
 Core = Callable[[str], pl.DataFrame]  # reads one model's Parquet output
@@ -347,3 +386,19 @@ def test_taf_hourly_expands_prevailing_and_overlay_groups(core: Core) -> None:
         (at(16, 0, 0), "FM", "VFR", None, "VFR", 18 + 40 / 60),
     ]  # fmt: skip
     assert hours["known_time"].unique().to_list() == [at(15, 5, 30)]
+
+
+def test_guidance_decodes_categories_and_dates_knowledge(core: Core) -> None:
+    gfs = core("gfs_mos").sort("valid_time")
+    assert gfs.select("valid_time", "lead_hours", "flight_category", "thunder_6h_pct").rows() == [
+        (at(15, 6, 0), 6.0, "LIFR", 10), (at(15, 9, 0), 9.0, "IFR", None),
+        (at(15, 12, 0), 12.0, "VFR", 30),
+    ]  # fmt: skip
+    assert gfs["known_time"].unique().to_list() == [at(15, 5, 0)]  # the run + 5 h
+    nbm = core("nbm").sort("valid_time")
+    decoded = ["ceiling_ft", "visibility_mi", "flight_category", "thunder_3h_pct"]
+    assert nbm.select(decoded).rows() == [
+        (None, 10.0, "VFR", 5), (800, 2.0, "IFR", None), (2500, None, None, 0),  # 2019 codes
+        (None, 10.0, "VFR", 5), (800, 2.5, "IFR", None), (2500, 5.0, "MVFR", 40),  # 2021 codes
+    ]  # fmt: skip
+    assert nbm["known_time"].min() == at(15, 2, 10)  # the cycle + 70 min

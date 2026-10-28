@@ -16,5 +16,7 @@
 
 ## Ingestion notes
 
+- **Not ingested yet** (deferred 2026-10-28). The hourly archive is about 4 GB of tars per year, 2026 is not archived yet, and LAMP's 1–25 h range is where the TAF already serves the outlook. IEM's `LAV` copy is lighter but has only 4 cycles per day, from 2020-07-12 (`iem_mos` card).
+
 - Stream each yearly tar once and extract station blocks for ORD and about 40 network airports into Parquet keyed by (issue_time, valid_time).
 - Do not keep the full tars.

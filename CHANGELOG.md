@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- GFS MOS and NBM station guidance for ORD (`ordfi.ingest.mos`, `make ingest-mos`), from IEM's MOS archive, one request per model and month.
+  - Coverage: GFS MOS (00, 06, 12 and 18Z runs) from 2014-12, and the NBM short-range bulletin (01, 07, 13 and 19Z cycles) from 2018-11, both 3-hourly to 72 h.
+  - dbt models `gfs_mos` and `nbm` decode the ceiling and visibility (MAV categories; NBM feet and miles, unlimited ceilings) into flight categories, beside thunder, precipitation, precipitation-type and IFR probabilities, snow, ice, wind and gusts.
+  - Knowledge times follow the catalog cards: the run + 5 h and the cycle + 70 min.
+  - NBM's codes changed with its versions (visibility in whole miles before 2020-02-20, an unlimited ceiling 888 before v4.0), found by checking against ORD's METARs. Decoded, NBM's flight categories agree with them 84.6 % of the time at up to 12 h, and GFS MOS's 83.2 %.
+  - LAMP is deferred; see its card.
 - Alerts and recalibration from the track record (`ordfi.models.recent`).
   - For each test month, the outlook tasks reset their alert threshold on the last 12 months with published outcomes. The threshold is the lowest forecast that flagged at most 10 % of the normal days or hours. The backtest forecasts the 14 months before the first test month for the record, without scoring them.
   - `gbdt_recent` is the GBDT shifted to the record's level. It is scored but not adopted: on the development months every variant lost skill.
