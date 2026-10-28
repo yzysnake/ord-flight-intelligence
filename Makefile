@@ -63,9 +63,10 @@ features: ## Build as-of feature snapshots from data/core: SPINE=departures|hour
 	ORDFI_DATA_DIR=$(ORDFI_DATA_DIR) $(RUN) python -m ordfi.features --spine $(or $(SPINE),departures) \
 		--from $(FROM) --to $(TO) $(if $(HORIZONS),--horizons $(HORIZONS))
 
-backtest: ## Rolling-origin backtest of the baselines: TASK=all|dep_late15|... FROM=2024-09 TO=2026-08 (NAME=run-name)
+backtest: ## Rolling-origin backtest: TASK=all|hour_bad60|... FROM=2024-09 TO=2026-08 (MODELS=calendar,gbdt WORKERS=4 NAME=run-name)
 	ORDFI_DATA_DIR=$(ORDFI_DATA_DIR) $(RUN) python -m ordfi.models.backtest --task $(or $(TASK),all) \
-		--from $(FROM) --to $(TO) $(if $(HORIZONS),--horizons $(HORIZONS)) $(if $(NAME),--run $(NAME))
+		--from $(FROM) --to $(TO) $(if $(HORIZONS),--horizons $(HORIZONS)) $(if $(MODELS),--models $(MODELS)) \
+		$(if $(WORKERS),--workers $(WORKERS)) $(if $(NAME),--run $(NAME))
 
 dagster: ## Start the local Dagster UI (http://127.0.0.1:3000)
 	mkdir -p .dagster && touch .dagster/dagster.yaml

@@ -30,7 +30,8 @@ class Model(Protocol):
         ...
 
     def fit_predict(self, train: pl.DataFrame, test: pl.DataFrame) -> NDArray[np.float64]:
-        """Fit on ``train`` (with its ``y`` label) and return P(y) for each ``test`` row."""
+        """Fit on ``train`` (with its ``y`` label, ``month`` and ``target_utc``) and return P(y)
+        for each ``test`` row."""
         ...
 
 
