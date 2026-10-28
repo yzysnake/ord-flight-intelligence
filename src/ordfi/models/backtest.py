@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import time
 from collections.abc import Callable, Sequence
@@ -314,6 +315,12 @@ def summary(metrics: pl.DataFrame) -> pl.DataFrame:
     ).with_columns(pl.col("base_rate", "brier", "roc_auc", "ece").round(3))  # fmt: skip
 
 
+def default_workers(task: Task) -> int:
+    """One worker per CPU for the hourly tasks, whose GBDT fits dominate; one process for the
+    departure tasks, whose fits take a second and whose rows would be copied to each worker."""
+    return (os.cpu_count() or 1) if task.spine == "hours" else 1
+
+
 def _month(text: str) -> date:
     return date.fromisoformat(f"{text}-01")
 
@@ -326,7 +333,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--horizons", default=",".join(HORIZONS), help="e.g. 24h,6h,1h")
     parser.add_argument("--models", help=f"e.g. gbdt,persistence (default: all; {REFERENCE} "
                                          "always runs, as the skill reference)")  # fmt: skip
-    parser.add_argument("--workers", type=int, default=4, help="test months fitted at once")
+    parser.add_argument("--workers", type=int,
+                        help="test months fitted at once (default: one per CPU for hourly tasks, "
+                             "else 1)")  # fmt: skip
     parser.add_argument("--run", help="run name (default: a UTC timestamp)")
     args = parser.parse_args(argv)
     months, month = [], _month(args.first)
@@ -343,8 +352,9 @@ def main(argv: list[str] | None = None) -> None:
         names = [name for name in names if set(wanted) & offered[name]]
     with pl.Config(tbl_rows=-1, tbl_cols=-1, tbl_width_chars=160, tbl_hide_dataframe_shape=True):
         for name in names:
+            workers = args.workers or default_workers(TASKS[name])
             out = run(name, args.horizons.split(","), months, data_dir(), args.run, wanted,
-                      args.workers)  # fmt: skip
+                      workers)  # fmt: skip
             print(f"{name}: {TASKS[name].description}\n  -> {out}", flush=True)
             print(summary(pl.read_parquet(out / "metrics.parquet")), flush=True)
 

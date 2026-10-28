@@ -54,10 +54,11 @@ Build point-in-time feature snapshots from the core tables (see [`docs/features/
 make features SPINE=departures FROM=2015-01 TO=2026-08   # also SPINE=hours
 ```
 
-Backtest the baselines on rolling monthly origins (see [`docs/backtests/`](docs/backtests/README.md)):
+Backtest the baselines and the Outlook GBDT on rolling monthly origins (see [`docs/backtests/`](docs/backtests/README.md) and the [model card](docs/model-cards/outlook-gbdt.md)):
 
 ```bash
-make backtest FROM=2024-09 TO=2026-08
+make backtest FROM=2024-09 TO=2026-08                            # every task and model
+make backtest TASK=hour_bad60 FROM=2024-09 TO=2026-08 MODELS=gbdt
 ```
 
 Archive the live feeds that have no public history (FAA NAS Status, ORD D-ATIS, CBP customs waits):
@@ -82,8 +83,8 @@ To use the environment in PyCharm: *Settings → Project → Python Interpreter 
 | `docs/adr/` | Architecture decision records |
 | `docs/data-catalog/` | One card per data source: licence, cadence, knowledge-time rule |
 | `docs/features/` | As-of feature snapshots: spines, knowledge-time rules, feature groups |
-| `docs/backtests/` | Backtest protocol, tasks, baselines and their scores |
-| `docs/model-cards/` | One card per released model |
+| `docs/backtests/` | Backtest protocol, tasks, baselines, the Outlook GBDT and their scores |
+| `docs/model-cards/` | One card per released or candidate model |
 | `infra/` | Deployment configuration |
 | `data/` | Local data mirror (git-ignored) |
 
@@ -102,7 +103,7 @@ To use the environment in PyCharm: *Settings → Project → Python Interpreter 
 |---|---|
 | 0 | Repository, environment, ADRs, data-catalog cards *(done; owner actions pending)* |
 | 1a | Historical foundation: BTS, weather and FAA advisory ingestion; start the free live archivers *(in progress)* |
-| 1b | Point-in-time feature store *(started)*, Outlook models, public v0.1 |
+| 1b | Point-in-time feature store, baselines and the Outlook GBDT *(started)*, public v0.1 |
 | 2 | Pickup Planner live beta |
 | 3 | Day-of flight risk, live connection risk, operations analytics; data-licensing decision |
 

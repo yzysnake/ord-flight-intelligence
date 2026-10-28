@@ -1,6 +1,7 @@
 """Rolling-origin folds, and a backtest run on a synthetic feature store."""
 
 import json
+import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
@@ -99,3 +100,8 @@ def test_the_cli_writes_the_run_and_prints_its_summary(
     assert set(metrics["model"]) == {"calendar", "announced"}  # with the skill reference
     with pytest.raises(SystemExit):
         backtest.main([*args, "--models", "oracle"])
+
+
+def test_only_the_hourly_tasks_fit_months_in_parallel_by_default() -> None:
+    assert backtest.default_workers(backtest.TASKS["hour_gdp"]) == (os.cpu_count() or 1)
+    assert backtest.default_workers(backtest.TASKS["dep_late15"]) == 1

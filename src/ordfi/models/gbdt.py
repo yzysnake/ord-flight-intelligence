@@ -30,6 +30,8 @@ from ordfi.models.metrics import calibration, logit
 Floats = NDArray[np.float64]
 Mask = NDArray[np.bool_]
 
+# One thread per fit: the backtest fits test months in parallel processes, which is faster at
+# these sizes than threads within a fit.
 PARAMS: Mapping[str, Any] = {
     "objective": "binary", "learning_rate": 0.05, "num_leaves": 15, "min_data_in_leaf": 200,
     "feature_fraction": 0.8, "bagging_fraction": 0.8, "bagging_freq": 1, "lambda_l2": 10.0,
