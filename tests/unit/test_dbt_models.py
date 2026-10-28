@@ -48,12 +48,12 @@ def at(day: int, hour: int, minute: int, month: int = 7, year: int = 2019) -> da
     return datetime(year, month, day, hour, minute, tzinfo=UTC)
 
 
-def leg(day: date, origin: str, dest: str, dep: str, dep_utc: datetime, arr_utc: datetime,
-        **carrier: object) -> dict[str, object]:  # fmt: skip
+def leg(day: date, origin: str, dest: str, dep: str, sched_dep: datetime, sched_arr: datetime,
+        **fields: object) -> dict[str, object]:  # fmt: skip
     return {
         "flight_date": day, "origin": origin, "dest": dest, "crs_dep_time": dep,
-        "sched_dep_utc": dep_utc, "sched_arr_utc": arr_utc, "cancelled": False,
-        "diverted": False, "known_time": FETCHED, "licence_class": "public-domain", **carrier,
+        "sched_dep_utc": sched_dep, "sched_arr_utc": sched_arr, "cancelled": False,
+        "diverted": False, "known_time": FETCHED, "licence_class": "public-domain", **fields,
     }  # fmt: skip
 
 
@@ -68,13 +68,26 @@ def write(
 
 def write_stage(root: Path) -> None:
     july15 = date(2019, 7, 15)
+    gojet = {"operating_airline": "G7", "marketing_airline_network": "UA"}
     write(root, "bts_ontime_marketing/year=2019/month=07", [
         leg(july15, "ORD", "SFO", "0700", at(15, 12, 0), at(15, 16, 30), operating_airline="UA",
-            flight_number_operating_airline=1, marketing_airline_network="UA"),
-        leg(july15, "LGA", "ORD", "0600", at(15, 10, 0), at(15, 12, 45), operating_airline="G7",
-            flight_number_operating_airline=4507, marketing_airline_network="UA"),
+            flight_number_operating_airline=1, marketing_airline_network="UA",
+            tail_number="N12345"),
+        # One aircraft: the evening before (not an ORD day), an ORD turn, then a cancelled leg.
+        leg(date(2019, 7, 14), "DSM", "LGA", "1700", at(14, 22, 0), at(14, 23, 30),
+            flight_number_operating_airline=4400, tail_number="N501GJ", dep_utc=at(14, 22, 0),
+            arr_utc=at(14, 23, 35), **gojet),
+        leg(july15, "LGA", "ORD", "0600", at(15, 10, 0), at(15, 12, 45),
+            flight_number_operating_airline=4507, tail_number="n501gj", dep_utc=at(15, 10, 10),
+            arr_utc=at(15, 12, 55), arr_delay=10, **gojet),
+        leg(july15, "ORD", "DSM", "0830", at(15, 13, 30), at(15, 14, 45),
+            flight_number_operating_airline=4508, tail_number="N501GJ", dep_utc=at(15, 13, 40),
+            arr_utc=at(15, 14, 50), **gojet),
+        leg(july15, "DSM", "ORD", "1100", at(15, 16, 0), at(15, 17, 15),
+            flight_number_operating_airline=4509, tail_number="N501GJ", cancelled=True, **gojet),
         leg(july15, "PDX", "SLC", "1315", at(15, 20, 15), at(15, 22, 7), operating_airline="DL",
-            flight_number_operating_airline=1209, marketing_airline_network="DL"),
+            flight_number_operating_airline=1209, marketing_airline_network="DL",
+            tail_number="N999DN"),  # never at ORD
     ], MARKETING)  # fmt: skip
     write(root, "bts_ontime_reporting/year=2017/month=07", [
         leg(date(2017, 7, 15), "LGA", "ORD", "0600", at(15, 10, 0, year=2017),
@@ -164,8 +177,25 @@ def test_flight_legs_take_marketing_from_2018_and_reporting_before(core: Core) -
     ).rows() == [
         ("2017-07-15_AA_2_LGA_ORD_0600", "reporting", "arrival", None, at(15, 12, 45, year=2017)),
         ("2019-07-15_G7_4507_LGA_ORD_0600", "marketing", "arrival", "UA", at(15, 12, 45)),
+        ("2019-07-15_G7_4508_ORD_DSM_0830", "marketing", "departure", "UA", at(15, 13, 30)),
+        ("2019-07-15_G7_4509_DSM_ORD_1100", "marketing", "arrival", "UA", at(15, 17, 15)),
         ("2019-07-15_UA_1_ORD_SFO_0700", "marketing", "departure", "UA", at(15, 12, 0)),
     ]
+    assert legs.filter(pl.col("flight_number") == 4507)["tail_number"].to_list() == ["N501GJ"]
+
+
+def test_aircraft_rotation_links_each_flown_leg_to_the_previous_one(core: Core) -> None:
+    rotation = core("aircraft_rotation").sort("tail_number", "flight_date", "leg_seq")
+    assert rotation.select(
+        "tail_number", "leg_seq", "legs_in_day", "flight_key", "prev_flight_key",
+        "station_continuous", "sched_ground_min", "actual_ground_min",
+    ).rows() == [
+        ("N12345", 1, 1, "2019-07-15_UA_1_ORD_SFO_0700", None, None, None, None),
+        ("N501GJ", 1, 2, "2019-07-15_G7_4507_LGA_ORD_0600", "2019-07-14_G7_4400_DSM_LGA_1700",
+         True, 630, 635),  # linked to the previous evening; the cancelled leg is left out
+        ("N501GJ", 2, 2, "2019-07-15_G7_4508_ORD_DSM_0830", "2019-07-15_G7_4507_LGA_ORD_0600",
+         True, 45, 45),
+    ]  # fmt: skip
 
 
 def test_weather_obs_drops_hfmetar_and_derives_categories(core: Core) -> None:

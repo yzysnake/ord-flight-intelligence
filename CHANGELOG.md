@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- dbt model `aircraft_rotation`: every flown leg of an aircraft on the days it touches ORD (national, 10.6 M legs), in the order the aircraft flew them. Each leg links to the previous one (including the previous evening) and carries scheduled and actual ground times and station continuity. Tests check the chain's coherence and the link to `flight_leg`.
+- Ephemeral dbt model `int_bts_legs`: the national BTS union, flight key and tail cleaning shared by `flight_leg` and `aircraft_rotation`.
 - First EDA notebook (`notebooks/01_ord_delays_overview.ipynb`) on the core tables. It covers coverage changes, the yearly trend, season × hour of day, ORD weather, FAA programs, inbound-aircraft delay and carriers, with a table beside every chart.
 - Chart theme (`ordfi.viz`): the validated categorical and sequential palette, a light matplotlib style, and title and axis helpers.
 - dbt project (`dbt/`, dbt Core v1 + dbt-duckdb, ADR-0002): stage sources and five core models, written as Parquet to `data/core`:
@@ -52,5 +54,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- `flight_leg` reads from `int_bts_legs`. Tail numbers are upper-cased, and placeholders shorter than 4 characters become null.
+- dbt core outputs use zstd compression (about a third smaller).
 - Ruff allows the en dash and apostrophe in strings, for chart labels.
 - Environment pins dbt Core and dbt-duckdb to the v1 line (`<2`, ADR-0002) and adds `dagster`, `dagster-webserver` and `dagster-dbt` (ADR-0003); `conda-lock.yml` regenerated.
