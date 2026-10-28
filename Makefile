@@ -8,8 +8,8 @@ PYTHON     = $(shell conda run -n $(ENV_NAME) python -c "import sys; print(sys.e
 
 .DEFAULT_GOAL := help
 .PHONY: help env env-update lock install hooks lint format typecheck test check clean \
-        ingest-bts ingest-atcscc ingest-iem dbt-build dagster collector-start collector-stop \
-        collector-status
+        ingest-bts ingest-atcscc ingest-iem dbt-build features dagster collector-start \
+        collector-stop collector-status
 
 help: ## List available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
@@ -58,6 +58,10 @@ ingest-iem: ## Fetch + stage IEM METAR/TAF for ORD: FROM=2015-01 TO=2026-10 (def
 dbt-build: ## Build and test the dbt core models (Parquet in data/core): SELECT=flight_leg+ to limit
 	mkdir -p $(ORDFI_DATA_DIR)/core $(ORDFI_DATA_DIR)/warehouse
 	$(DBT) build --project-dir dbt --profiles-dir dbt $(if $(SELECT),--select $(SELECT))
+
+features: ## Build as-of feature snapshots from data/core: SPINE=departures|hours FROM=2019-01 TO=2019-12 (HORIZONS=24h,6h,...)
+	ORDFI_DATA_DIR=$(ORDFI_DATA_DIR) $(RUN) python -m ordfi.features --spine $(or $(SPINE),departures) \
+		--from $(FROM) --to $(TO) $(if $(HORIZONS),--horizons $(HORIZONS))
 
 dagster: ## Start the local Dagster UI (http://127.0.0.1:3000)
 	mkdir -p .dagster && touch .dagster/dagster.yaml
