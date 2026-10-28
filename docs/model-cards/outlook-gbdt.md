@@ -63,6 +63,7 @@ Daily, Brier skill on the same months (730 days):
 - The study's bad-day criterion: 60 %+ of bad days flagged at ≤ 1 false alarm per 10 normal days.
   - The evening before, it is met: 71 % with the best threshold, and 72 % at 1.05 false alarms per 10 with a threshold fixed on the development months.
   - The morning before, it is not met: 55 %.
+  - With the alert threshold reset each month on the year before, the evening-before alert catches 77 % of bad days, at 1.19 false alarms per 10 normal days.
 - It meets the v0.1 skill targets (above 0.10 at 24 h and 0.25 at 6 h, calibration error at most 0.03) for bad hours. GDP hours meet them on the point estimate. Ground-stop hours do not.
 - Skill is positive in every season and regime: on program, thunder and snow days, on other days, and in the FAA cap months.
 - Ablations: the 24 h skill is mostly the TAF's; FAA programs and in-day operations drive the short horizons.
@@ -89,4 +90,4 @@ Planned for v0.1, not built yet:
 - Brier skill and calibration on each month once BTS publishes it, on the public track-record page;
 - feature freshness, i.e. how late the METAR, TAF and advisories arrive;
 - a fall back to the calendar climatology when inputs are stale;
-- the alert threshold's false-alarm rate, reset on the most recent months.
+- the alert threshold, reset each month on the last 12 months with published outcomes. In the backtest it held false alarms at 9.3 % on the development months, but at 13.7 % in the stormier reported months (`docs/backtests/`).

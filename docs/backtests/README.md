@@ -14,7 +14,8 @@ A run writes `data/backtests/<task>/<run>/`:
 - `predictions.parquet`: every model's forecast for every scored row;
 - `metrics.parquet`: scores per horizon, model and slice;
 - `reliability.parquet`: equal-mass reliability bins;
-- `run.json`: the settings and the git commit.
+- `alerts.parquet` (outlook tasks): the alerts, with each month's threshold set on its track record;
+- `run.json`: the settings, the track-record months and the git commit.
 
 ## Protocol
 
@@ -33,6 +34,7 @@ A run writes `data/backtests/<task>/<run>/`:
   - days with thunder, and days with snow or freezing precipitation;
   - the FAA operations cap (from 2 Jun 2026);
   - each test month.
+- **Track record** (outlook tasks). The 14 months before the first test month are forecast too, but not scored. Each test month's alert threshold is set on the forecasts and outcomes of the 12 months that end with the last month BTS has published (below).
 - **Workers.** Test months are independent, so their folds run in parallel worker processes (`WORKERS`). The default is one per CPU for the hourly tasks and a single process for the departure tasks, whose fits take seconds and whose rows would be copied to every worker. Results do not depend on the number of workers. Threads are not used: LightGBM keeps its thread count in process-wide state, and boosters trained in concurrent threads crash or corrupt memory.
 
 ## Tasks
@@ -272,6 +274,77 @@ The study's decision criterion (§10.3) is to flag at least 60 % of bad days 24 
 **Caveats:**
 
 - **Best-threshold hit rates are points on the ROC curve.** A live alert must fix its threshold beforehand, as in the right column.
-- **A threshold fixed on calmer months flags more in stormier ones.** Setting it, or recalibrating the level, on the most recent months is the obvious next step.
+- **A threshold fixed on calmer months flags more in stormier ones.** Resetting it each month on the track record is measured below.
 - **The three daily events overlap.** A GDP day is often a bad day, so they are not independent evidence.
 - **Two and three days ahead need forecasts beyond the TAF's 30 hours** (NBM).
+
+## Alerts and recalibration from the track record
+
+Live, the outlook's forecasts are checked against their outcomes once BTS publishes each month. `ordfi.models.recent` uses that track record. At the start of each test month M, the record is the forecasts and outcomes of the 12 months ending with M − 3, the last month BTS has published. Every record forecast was out of sample when it was made.
+
+- **The alert threshold** is the lowest forecast that would have flagged at most 10 % of the record's normal days (or hours), the study's false-alarm budget. It is reset every month, without seeing the test month.
+- **Recalibration** (`gbdt_recent`, scored but not adopted): the GBDT's forecasts shifted on the logit scale, so that over the record their mean matches the observed rate.
+
+### Settings were frozen on earlier months
+
+Both were compared on the development months (Sep 2022 – Aug 2024), with forecasts from Jul 2021 to build the record. False alarms realized by the GBDT's alerts, over the 30 outlook task-horizons:
+
+| Track record | False alarms (range) | Mean | Task-horizons over 11 % |
+|---|---|---|---|
+| 6 months | 9.0 – 23.8 % | 12.4 % | 21 of 30 |
+| **12 months** | **6.4 – 11.8 %** | **9.3 %** | **3 of 30** |
+
+Brier skill summed over the task-horizons, and the mean calibration error:
+
+| Forecasts | Hourly skill | Hourly calibration error | Daily skill | Daily calibration error |
+|---|---|---|---|---|
+| **GBDT as is** | **5.005** | **0.0028** | **1.981** | 0.0285 |
+| shifted on 6 months | 4.914 | 0.0033 | 1.856 | 0.0271 |
+| shifted on 12 months | 4.924 | 0.0035 | 1.822 | 0.0272 |
+| Platt on 6 months | 4.814 | 0.0047 | 1.357 | 0.0305 |
+| Platt on 12 months | 4.873 | 0.0041 | 1.769 | 0.0287 |
+
+- **Alerts use a 12-month record.** Six months give too few normal days for a stable cut: false alarms ran up to 23.8 %, worst two and three days ahead, where skill is low.
+- **Recalibration was not adopted.** Every variant lost skill, hourly and daily. In these months, the level errors seen three or more months back did not persist, so correcting them added noise. The 12-month shift is still scored, as `gbdt_recent`.
+
+### Results
+
+Run `outlook-track-record-2024-09-to-2026-08`, the six outlook tasks on the same 24 test months (with forecasts from Jul 2023 for the record), in 13 minutes. The original models' scores are identical to their earlier runs. The GBDT's alerts, each month's threshold set on its record:
+
+| Task | Horizon | Events | Caught | False alarms per 10 | Flags right | Best threshold (≤ 1 per 10) |
+|---|---|---|---|---|---|---|
+| `hour_bad60` | 24 h | 1,780 | 66 % | 1.22 | 47 % | 61 % |
+| | 6 h | 1,780 | 81 % | 1.18 | 53 % | 79 % |
+| `hour_gdp` | 24 h | 679 | 71 % | 1.55 | 16 % | 63 % |
+| | 6 h | 679 | 85 % | 1.46 | 19 % | 80 % |
+| `hour_ground_stop` | 24 h | 553 | 59 % | 1.23 | 14 % | 55 % |
+| | 6 h | 553 | 72 % | 1.16 | 17 % | 69 % |
+| `day_bad60` | `d1_0700` | 100 | 71 % | 1.67 | 40 % | 55 % |
+| | `d1_1900` | 100 | 77 % | 1.19 | 51 % | 71 % |
+| | `d0_0500` | 100 | 86 % | 1.37 | 50 % | 80 % |
+| `day_gdp` | `d1_0700` | 105 | 58 % | 1.62 | 38 % | 44 % |
+| | `d1_1900` | 105 | 70 % | 1.34 | 46 % | 59 % |
+| | `d0_0500` | 105 | 69 % | 1.12 | 51 % | 66 % |
+| `day_ground_stop` | `d1_0700` | 137 | 47 % | 1.06 | 50 % | 45 % |
+| | `d1_1900` | 137 | 60 % | 1.10 | 56 % | 58 % |
+| | `d0_0500` | 137 | 63 % | 0.89 | 62 % | 66 % |
+
+**Findings:**
+
+- **The alerts overshoot their budget when disruption rises.**
+  - False alarms ran 8.9 – 27.5 % over the 30 task-horizons (mean 13.7 %).
+  - Without the two- and three-day issues, they ran 8.9 – 16.7 % (mean 12.7 %).
+  - The reported months were stormier than the year before each of them, so a threshold set on last year's normal days flags more of this year's. On the calmer development months, the same rule landed at 9.3 %.
+  - The alerts also catch more events than the best threshold at exactly 1 in 10.
+- **The bad-day criterion, with a rule fixed beforehand:**
+  - The evening before, the alert catches 77 % of bad days at 1.19 false alarms per 10 normal days, and half its flags are right. That is above 60 %, but over the budget by a fifth.
+  - The morning before, it catches 71 % at 1.67.
+- **Recalibration fixes the level but not the score.**
+  - In the reported months, `gbdt_recent` lowers the calibration error: daily from 0.040 to 0.035 on average, and for GDP days the evening before from 0.043 to 0.025, its mean forecast 14.5 % against 14.4 % observed.
+  - It still loses Brier skill (0.08 summed, both hourly and daily), as on the development months. It stays an alternative, not the default.
+
+**Caveats:**
+
+- **The rule needs a year of forecasts with published outcomes before its first alert.** Live, the outlook must run (or be backfilled) for 14 months first.
+- **With the lag, a trend always leads the threshold.** The record ends three months before the alert, and disruption at ORD has risen since 2023. Targeting the budget with a margin, or a threshold set on the latest forecasts' own expected false alarms (which needs no outcomes), are the next candidates. Both must be chosen on the development months.
+- **A month's threshold is one number for all its hours or days.** A seasonal threshold would need several years of record.
