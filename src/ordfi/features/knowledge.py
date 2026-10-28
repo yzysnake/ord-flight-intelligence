@@ -8,6 +8,8 @@ checks that on random inputs.
 Rules (see the feasibility study, section 7.5):
 
 - METARs and TAFs: their ``known_time`` (issue time + 10 min).
+- Station guidance: its ``known_time``, the GFS MOS run + 5 h and the NBM cycle + 70 min
+  (data-catalog cards ``iem_mos`` and ``noaa_nbm``).
 - ATC program versions: their ``known_time`` (the advisory's send time). Until the next
   version is known, a version's ``valid_to`` is unknown too.
 - Flight schedules (times, carrier, route): ``SCHEDULE_LEAD`` before scheduled departure.
@@ -49,6 +51,8 @@ class Tables:
     calendar: pl.DataFrame  # calendar
     weather: pl.DataFrame  # weather_obs
     taf: pl.DataFrame  # taf_hourly
+    gfs_mos: pl.DataFrame  # gfs_mos
+    nbm: pl.DataFrame  # nbm
     program_versions: pl.DataFrame  # atc_program_interval_version
     programs: pl.DataFrame  # atc_program_interval (labels only)
     legs: pl.DataFrame  # flight_leg (LEG_COLUMNS)
@@ -71,6 +75,8 @@ def visible(tables: Tables, as_of: datetime) -> Tables:
         tables,
         weather=tables.weather.filter(pl.col("known_time") <= t),
         taf=tables.taf.filter(pl.col("known_time") <= t),
+        gfs_mos=tables.gfs_mos.filter(pl.col("known_time") <= t),
+        nbm=tables.nbm.filter(pl.col("known_time") <= t),
         program_versions=versions,
         programs=tables.programs.clear(),
         legs=legs,

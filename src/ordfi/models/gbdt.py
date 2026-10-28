@@ -43,6 +43,16 @@ FALLBACK_ROUNDS = 100  # when the window is too short to hold months out
 EMBARGO = timedelta(days=1)  # left out between the fitted and the held-out months
 FLIGHT_CATEGORY_RANK = {"LIFR": 0, "IFR": 1, "MVFR": 2, "VFR": 3}
 
+# Station guidance for the target hour or day, the same on both outlook spines.
+GUIDANCE_FEATURES = (
+    "mos_projections", "mos_flight_category", "mos_ceiling_category", "mos_visibility_category",
+    "mos_wind_speed_kt", "mos_snow_pct", "mos_freezing_pct", "mos_thunder_6h_pct",
+    "mos_severe_6h_pct", "mos_pop_6h_pct", "mos_age_min",
+    "nbm_projections", "nbm_flight_category", "nbm_ceiling_ft", "nbm_visibility_mi",
+    "nbm_ifr_ceiling_pct", "nbm_ifr_visibility_pct", "nbm_snow_pct", "nbm_freezing_pct",
+    "nbm_sleet_pct", "nbm_wind_speed_kt", "nbm_wind_gust_kt", "nbm_thunder_3h_pct",
+    "nbm_pop_6h_pct", "nbm_snow_6h_in", "nbm_ice_6h_in", "nbm_age_min",
+)  # fmt: skip
 # Every feature of the hours spine (docs/features/), by group.
 OUTLOOK_FEATURES = (
     "cal_local_hour", "cal_day_of_week", "cal_month", "cal_is_weekend", "cal_is_holiday",
@@ -53,6 +63,7 @@ OUTLOOK_FEATURES = (
     "taf_available", "taf_lead_min", "taf_is_amendment", "taf_flight_category",
     "taf_worst_flight_category", "taf_visibility_sm", "taf_ceiling_ft", "taf_wind_speed_kt",
     "taf_wind_gust_kt", "taf_thunder", "taf_snow", "taf_prob_pct",
+    *GUIDANCE_FEATURES,
     "atc_gdp_now", "atc_gdp_since_start_min", "atc_gdp_to_end_min", "atc_gdp_at_target",
     "atc_gs_now", "atc_gs_since_start_min", "atc_gs_to_end_min", "atc_gs_at_target",
     "atc_gdp_issued_24h", "atc_gs_issued_24h",
@@ -73,6 +84,7 @@ DAY_FEATURES = (
     "taf_day_snow_hours", "taf_day_max_wind_kt", "taf_day_max_gust_kt", "taf_day_min_ceiling_ft",
     "taf_day_min_visibility_sm", "taf_day_max_prob_pct", "taf_day_age_min",
     "taf_day_flight_category", "taf_day_worst_flight_category",
+    *GUIDANCE_FEATURES,
     "atc_gdp_now", "atc_gdp_since_start_min", "atc_gdp_to_end_min", "atc_gdp_at_target",
     "atc_gs_now", "atc_gs_since_start_min", "atc_gs_to_end_min", "atc_gs_at_target",
     "atc_gdp_issued_24h", "atc_gs_issued_24h",
@@ -88,7 +100,7 @@ FEATURES = {"hours": OUTLOOK_FEATURES, "days": DAY_FEATURES}
 # Months held out for early stopping and recalibration: a year of hours, but two years of days,
 # which give 30 times fewer rows (chosen on the development months, docs/backtests/).
 VALIDATION_MONTHS = {"hours": 12, "days": 24}
-GROUPS = ("cal_", "wx_", "taf_", "atc_", "ops_", "dem_")
+GROUPS = ("cal_", "wx_", "taf_", "mos_", "nbm_", "atc_", "ops_", "dem_")
 
 
 @dataclass(frozen=True)

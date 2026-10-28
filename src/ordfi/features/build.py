@@ -38,12 +38,12 @@ GROUPS: dict[str, list[groups.Group]] = {
         groups.demand, groups.flight, groups.inbound,
     ],
     "hours": [
-        groups.calendar, groups.weather, groups.taf, groups.programs, groups.operations,
-        groups.demand,
+        groups.calendar, groups.weather, groups.taf, groups.guidance, groups.programs,
+        groups.operations, groups.demand,
     ],
     "days": [
-        groups.day_calendar, groups.weather, groups.day_taf, groups.day_programs,
-        groups.operations, groups.previous_day, groups.day_demand,
+        groups.day_calendar, groups.weather, groups.day_taf, groups.guidance,
+        groups.day_programs, groups.operations, groups.previous_day, groups.day_demand,
     ],
 }  # fmt: skip
 LABELS = {"departures": departure_labels, "hours": hour_labels, "days": day_labels}
@@ -90,6 +90,14 @@ def load(core: Path, start: datetime, end: datetime, lead: timedelta) -> Tables:
         pl.col("valid_time").is_between(start - timedelta(hours=1), after, closed="left")
         & (pl.col("known_time") < end)
     )
+    # Projections around the targets, from runs known before the last as_of.
+    guidance = {
+        name: scan(name).filter(
+            pl.col("valid_time").is_between(start - timedelta(hours=2), after + timedelta(hours=6))
+            & (pl.col("known_time") < end)
+        )
+        for name in ("gfs_mos", "nbm")
+    }
     versions = scan("atc_program_interval_version").filter(
         (pl.col("known_time") < end)
         & (pl.coalesce("end_utc", pl.col("start_utc") + timedelta(days=1)) > before)
@@ -104,6 +112,8 @@ def load(core: Path, start: datetime, end: datetime, lead: timedelta) -> Tables:
         calendar=scan("calendar").collect(),
         weather=weather.collect(),
         taf=taf.collect(),
+        gfs_mos=guidance["gfs_mos"].collect(),
+        nbm=guidance["nbm"].collect(),
         program_versions=versions.collect(),
         programs=programs.collect(),
         legs=legs.select(LEG_COLUMNS).collect(),
