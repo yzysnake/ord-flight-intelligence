@@ -83,11 +83,28 @@ def test_a_run_never_learns_from_months_it_could_not_have_seen(
     assert predictions["p"].max() == 0.0
     assert set(predictions["model"]) == {
         "base_rate", "calendar", "announced", "gbdt_schedule", "gbdt", "gbdt_no_taf",
-        "gbdt_no_atc", "gbdt_no_ops",
+        "gbdt_no_atc", "gbdt_no_ops", "gbdt_recent",
     }  # fmt: skip
     metrics = pl.read_parquet(out / "metrics.parquet")
     assert set(metrics["slice"]) == set(backtest.SLICES)
     assert json.loads((out / "run.json").read_text())["label_lag_months"] == 2
+
+
+def test_outlook_runs_forecast_a_track_record_and_score_only_the_test_months(
+    tmp_path: Path,
+) -> None:
+    months = [backtest.add_months(date(2017, 1, 1), i) for i in range(32)]
+    write_store(tmp_path, months, {m: m.month in (6, 7) for m in months})
+    out = backtest.run("hour_gdp", ["1h"], [date(2019, 7, 1), date(2019, 8, 1)], tmp_path, "t",
+                       ["announced"])  # fmt: skip
+    record = json.loads((out / "run.json").read_text())["track_record_months"]
+    assert record[0] == "2018-05-01" and record[-1] == "2019-06-01" and len(record) == 14
+    predictions = pl.read_parquet(out / "predictions.parquet")
+    assert predictions["test_month"].min() == date(2018, 5, 1)
+    scored = pl.read_parquet(out / "metrics.parquet").filter(pl.col("slice") == "all")
+    assert set(scored["n"]) == {(31 + 31) * 24.0}  # July and August only
+    alerts = pl.read_parquet(out / "alerts.parquet")
+    assert set(alerts["model"]) == {"calendar", "announced"} and set(alerts["months"]) == {2}
 
 
 def test_worker_processes_forecast_as_one_process_does(tmp_path: Path) -> None:
@@ -98,7 +115,7 @@ def test_worker_processes_forecast_as_one_process_does(tmp_path: Path) -> None:
                                      workers=n) / "predictions.parquet")
         for n in (1, 2)
     )  # fmt: skip
-    assert set(one["model"]) == {"calendar", "gbdt"} and one.equals(two)
+    assert set(one["model"]) == {"calendar", "gbdt", "gbdt_recent"} and one.equals(two)
 
 
 def test_the_cli_writes_the_run_and_prints_its_summary(
