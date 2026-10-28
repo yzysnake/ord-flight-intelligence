@@ -152,10 +152,18 @@ models:
         description: Proposed programs (e.g. "CDM PROPOSED GROUND DELAY PROGRAM") are not in effect.
       - name: period_format
         description: "How `period_text` was read: 'dated' (DD/HHMMZ - DD/HHMMZ), 'undated' (HHMMZ-HHMMZ) or 'until' (UNTIL HHMMZ)."
+      - name: period_text
+        description: >
+          The advisory's period as written: the program or ground-stop period, or before
+          November 2006 a GDP's ARRIVALS ESTIMATED FOR window (for a revision, from the revision).
+          Some ground stops, mostly before 2007, have none (in effect until cancelled).
       - name: start_utc
-        description: Period start; days are resolved to the month nearest the send time.
+        description: >
+          Period start; days are resolved to the month nearest the send time. Null when the
+          period is missing, unreadable or implausible (a mistyped day: it runs backwards, lasts
+          over two days or starts over two days from the send time).
       - name: end_utc
-        description: Period end; resolved after the start.
+        description: Period end; resolved after the start. Null whenever start_utc is.
       - name: known_time
         description: The advisory's send time.
         data_tests: [not_null]

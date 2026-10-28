@@ -1,7 +1,10 @@
--- Parsed program periods must run forwards, last under two days and start within two days of
--- the advisory's send time; a failure means the day or month was resolved wrongly.
-select adv_date, number, issued_at, period_text, start_utc, end_utc
-from {{ ref('atc_program') }}
-where end_utc < start_utc
-    or end_utc - start_utc > interval 2 day
-    or abs(epoch(start_utc) - epoch(issued_at)) > 2 * 86400
+-- atc_program leaves a dated period unresolved (null) when it runs backwards, lasts over two days
+-- or starts over two days from the send time, as a mistyped day does. That must stay rare: more
+-- than a handful and over 0.1 % would mean days or months are resolved wrongly.
+with dated as (
+    select count(*) filter (where start_utc is null) as unresolved, count(*) as periods
+    from {{ ref('atc_program') }}
+    where period_format = 'dated'
+)
+
+select * from dated where unresolved > 10 and unresolved > 0.001 * periods

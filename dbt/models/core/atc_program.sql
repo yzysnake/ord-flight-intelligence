@@ -79,6 +79,29 @@ periods as (
             when until_time.h != '' then issued_at
         end as start_utc
     from parts
+),
+
+resolved as (
+    select
+        *,
+        case period_format
+            when 'dated' then {{ day_time_near('start_utc', 'dated.d2', 'dated.h2', 'dated.m2') }}
+            when 'undated' then {{ time_after('start_utc', 'undated.h2', 'undated.m2') }}
+            when 'until' then {{ time_after('issued_at', 'until_time.h', 'until_time.m') }}
+        end as end_utc
+    from periods
+),
+
+checked as (
+    -- A mistyped day (e.g. "142056Z-182230Z" sent on the 18th for 2056Z-2230Z) gives a period
+    -- that runs backwards, lasts over two days or starts over two days from the send time. It is
+    -- left unresolved rather than guessed; period_text keeps the original.
+    select
+        *,
+        end_utc >= start_utc
+            and end_utc - start_utc <= interval 2 day
+            and abs(epoch(start_utc) - epoch(issued_at)) <= 2 * 86400 as plausible
+    from resolved
 )
 
 select
@@ -95,12 +118,8 @@ select
     known_time,
     period_text,
     period_format,
-    start_utc,
-    case period_format
-        when 'dated' then {{ day_time_near('start_utc', 'dated.d2', 'dated.h2', 'dated.m2') }}
-        when 'undated' then {{ time_after('start_utc', 'undated.h2', 'undated.m2') }}
-        when 'until' then {{ time_after('issued_at', 'until_time.h', 'until_time.m') }}
-    end as end_utc,
+    case when plausible then start_utc end as start_utc,
+    case when plausible then end_utc end as end_utc,
     program_rate,
     average_delay_min,
     maximum_delay_min,
@@ -108,5 +127,5 @@ select
     issued_at as valid_time,
     raw_sha256,
     licence_class
-from periods
+from checked
 order by issued_at, number

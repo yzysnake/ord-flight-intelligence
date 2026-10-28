@@ -87,13 +87,13 @@ def test_ord_selection() -> None:
     assert atcscc.is_ord_related(reroute)
 
 
-def mock_client(seen: list[str]) -> httpx.Client:
+def mock_client(seen: list[str], detail: str = DETAIL) -> httpx.Client:
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
         if "adv_list" in request.url.path:
             page = LISTING if request.url.params["date"] == DAY.isoformat() else "<table></table>"
             return httpx.Response(200, text=page)
-        return httpx.Response(200, text=DETAIL)
+        return httpx.Response(200, text=detail)
 
     return httpx.Client(transport=httpx.MockTransport(handler))
 
@@ -138,6 +138,34 @@ def test_stage_year(tmp_path: Path) -> None:
     assert details["number"].to_list() == [1, 3]
     assert details["average_delay"].to_list() == ["130", "130"]
     assert details["licence_class"].unique().to_list() == ["public-domain"]
+
+
+# A GDP in the layout used before November 2006: the period is "ARRIVALS ESTIMATED FOR", the rate
+# "PROGRAM AAR" (to May 2004) and the element "AIRPORT".
+OLD_DETAIL = """<html><body><pre>
+AIRPORT: ORD
+ADL TIME: 12:12Z
+PROGRAM TYPE: RBS PP
+ARRIVALS ESTIMATED FOR: 011212Z - 011959Z
+PROGRAM AAR: 78
+ALL CENTERS ARE INCLUDED IN THE PROGRAM.  THE FOLLOWING SHALL APPLY
+FA DELAYS:
+(Manual) ZAB ZAU ZBW ZDC ZDV ZFW ZHU ZID ZJX ZKC ZLA ZLC ZMA ZME ZMP
+MAXIMUM DELAY: 85
+AVERAGE DELAY: 30
+REASON: WEATHER, LO CIGS
+</pre></body></html>"""
+
+
+def test_stage_year_reads_the_old_gdp_layout(tmp_path: Path) -> None:
+    with mock_client([], detail=OLD_DETAIL) as client:
+        atcscc.crawl(DAY, DAY, client=client, data_root=tmp_path, pause=0,
+                     today=date(2026, 10, 27), log=lambda _: None)  # fmt: skip
+    _, detail_path = atcscc.stage_year(tmp_path, 2019)
+    gdp = pl.read_parquet(detail_path).filter(pl.col("number") == 3)
+    assert gdp.select("ctl_element", "period", "program_rate", "average_delay").row(0) == (
+        "ORD", "011212Z - 011959Z", "78", "30",
+    )  # fmt: skip
 
 
 def test_typed_fields_across_advisory_kinds() -> None:

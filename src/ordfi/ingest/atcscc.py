@@ -133,12 +133,16 @@ def first_field(fields: dict[str, str], *names: str) -> str | None:
 
 
 def period_field(fields: dict[str, str]) -> str | None:
-    """Program/stop period, cancellation period or reroute validity, whichever is present."""
+    """Program/stop period, cancellation period or reroute validity, whichever is present.
+
+    GDP advisories before November 2006 have no ``PROGRAM PERIOD``; their ``ARRIVALS ESTIMATED
+    FOR`` window is used instead (for a revision it starts at the revision, not the program start).
+    """
     preferred = first_field(fields, *_PERIOD_KEYS)
     if preferred:
         return preferred
     others = [value for key, value in fields.items() if key.endswith("PERIOD") and value]
-    return others[0] if others else fields.get("VALID")
+    return others[0] if others else first_field(fields, "ARRIVALS ESTIMATED FOR", "VALID")
 
 
 def category(title: str) -> str:
@@ -327,11 +331,12 @@ def stage_year(data_root: Path, year: int) -> tuple[Path, Path]:
                 "number": int(number),
                 "text": text,
                 "ctl_element": first_field(
-                    fields, "CTL ELEMENT", "DESTINATION AIRPORT", "CONSTRAINED AREA"
+                    fields, "CTL ELEMENT", "DESTINATION AIRPORT", "CONSTRAINED AREA", "AIRPORT"
                 ),
                 "element_type": fields.get("ELEMENT TYPE"),
                 "period": period_field(fields),
-                "program_rate": fields.get("PROGRAM RATE"),
+                # Labelled "PROGRAM AAR" until May 2004.
+                "program_rate": first_field(fields, "PROGRAM RATE", "PROGRAM AAR"),
                 "average_delay": fields.get("AVERAGE DELAY"),
                 "maximum_delay": fields.get("MAXIMUM DELAY"),
                 "reason": first_field(fields, "IMPACTING CONDITION", "REASON"),
