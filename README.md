@@ -51,7 +51,7 @@ make dbt-build      # calendar, flight_leg, weather_obs(_hourly), atc_program â†
 Build point-in-time feature snapshots from the core tables (see [`docs/features/`](docs/features/README.md)):
 
 ```bash
-make features SPINE=departures FROM=2015-01 TO=2026-08   # also SPINE=hours
+make features SPINE=departures FROM=2015-01 TO=2026-08   # also SPINE=hours or SPINE=days
 ```
 
 Backtest the baselines and the Outlook GBDT on rolling monthly origins (see [`docs/backtests/`](docs/backtests/README.md) and the [model card](docs/model-cards/outlook-gbdt.md)):

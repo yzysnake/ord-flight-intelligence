@@ -13,7 +13,7 @@ from hypothesis import strategies as st
 
 from ordfi.features.build import features, spine_for
 from ordfi.features.knowledge import Tables, visible
-from ordfi.features.spines import HORIZONS
+from ordfi.features.spines import horizons
 from tests.feature_tables import tables as make_tables
 
 BASE = datetime(2019, 7, 15, tzinfo=UTC)
@@ -152,13 +152,18 @@ def worlds(draw: st.DrawFn) -> Tables:
 
 
 def check(spine_name: str, tables: Tables, picks: list[int]) -> None:
-    """Each picked spine row: features from the full tables == from the tables as known."""
-    spine = spine_for(spine_name, tables, BASE, at(SPAN_MIN), list(HORIZONS))
+    """Each picked spine row: features from the full tables == from the tables as known. For
+    days, every row: the world's second day at each issue, most of them inside the world."""
+    if spine_name == "days":
+        start, end = BASE + timedelta(days=1), BASE + timedelta(days=2)
+    else:
+        start, end = BASE, at(SPAN_MIN)
+    spine = spine_for(spine_name, tables, start, end, horizons(spine_name))
     if spine.is_empty():
         return
     full = features(spine_name, spine, tables)
-    for pick in picks:
-        r = pick % spine.height
+    chosen = range(spine.height) if spine_name == "days" else {p % spine.height for p in picks}
+    for r in chosen:
         row = spine.slice(r, 1)
         known = features(spine_name, row, visible(tables, row["as_of"].item()))
         expected = full.filter(pl.col("row") == r)
@@ -167,6 +172,8 @@ def check(spine_name: str, tables: Tables, picks: list[int]) -> None:
 
 picks = st.lists(st.integers(min_value=0, max_value=10_000), min_size=1, max_size=5)
 relaxed = settings(deadline=None, max_examples=30, suppress_health_check=[HealthCheck.too_slow])
+# A day's features touch the hours around as_of less often, so leaks need more worlds to show.
+thorough = settings(relaxed, max_examples=60)
 
 
 @relaxed
@@ -179,3 +186,9 @@ def test_departure_features_use_only_what_was_known(tables: Tables, rows: list[i
 @given(worlds(), picks)
 def test_hour_features_use_only_what_was_known(tables: Tables, rows: list[int]) -> None:
     check("hours", tables, rows)
+
+
+@thorough
+@given(worlds(), picks)
+def test_day_features_use_only_what_was_known(tables: Tables, rows: list[int]) -> None:
+    check("days", tables, rows)

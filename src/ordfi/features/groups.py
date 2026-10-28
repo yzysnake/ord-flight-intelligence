@@ -1,9 +1,10 @@
 """As-of feature groups.
 
 Each group takes the spine (``row``, ``as_of``, ``target_utc`` and, for departures,
-``flight_key``) and the tables, and returns one row per spine row: its features, computed only
-from what was known at ``as_of`` (ordfi.features.knowledge). Groups that depend on ``as_of``
-alone are computed once per distinct ``as_of`` and joined back.
+``flight_key``; for days, ``target_date`` and ``target_end_utc``) and the tables, and returns
+one row per spine row: its features, computed only from what was known at ``as_of``
+(ordfi.features.knowledge). Groups that depend on ``as_of`` alone are computed once per
+distinct ``as_of`` and joined back. The ``day_`` groups summarize the whole target day.
 """
 
 from __future__ import annotations
@@ -23,7 +24,9 @@ PROGRAM_COUNT_WINDOW = timedelta(hours=24)
 # A program version with no end stated (an open ground stop) is assumed to last this long.
 OPEN_PROGRAM = timedelta(hours=2)
 INBOUND_WINDOW = timedelta(hours=24)
+PREVIOUS_DAY = timedelta(hours=24)
 FAR_FUTURE = pl.lit(datetime(9999, 1, 1, tzinfo=UTC), dtype=pl.Datetime("us", "UTC"))
+FLIGHT_CATEGORIES = ("LIFR", "IFR", "MVFR", "VFR")  # worst first
 
 
 def _minutes(duration: pl.Expr) -> pl.Expr:
@@ -49,6 +52,11 @@ def calendar(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
         cal_days_since_holiday="days_since_holiday",
     )
     return rows.join(days, on="date", how="left").drop("date")
+
+
+def day_calendar(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
+    """The target day's weekday, month and holiday proximity (always known)."""
+    return calendar(spine, tables).drop("cal_local_hour")
 
 
 def weather(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
@@ -130,26 +138,101 @@ def taf(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
     return rows.join(features, on=["as_of", "target_hour"], how="left").drop("as_of", "target_hour")
 
 
-def programs(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
-    """ORD's general GDPs and ground stops as known at as_of: in effect now (minutes since the
-    start, to the announced end), announced to cover the target, and how many were issued in
-    the last 24 hours."""
-    versions = tables.program_versions.filter(
+def day_taf(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
+    """The latest TAF known at as_of for each hour of the target day, summed up: the hours
+    covered; the worst flight category, prevailing and with TEMPO and PROB groups; hours of IFR
+    or worse, of thunder (prevailing, TEMPO or PROB) and of snow; the strongest wind and gust;
+    the lowest ceiling and visibility; the highest PROB; and the newest TAF's age and whether it
+    is an amendment. Null when no TAF reaches the day (beyond its 30 hours)."""
+    keys = spine.select("as_of", "target_utc", "target_end_utc").unique()
+    day_hours = (
+        keys.with_columns(
+            valid_time=pl.datetime_ranges("target_utc", "target_end_utc", "1h", closed="left")
+        )
+        .explode("valid_time")
+        .sort("as_of")
+    )
+    hourly = tables.taf.sort("known_time", "product_id", maintain_order=True)
+    # Sorted by known_time above; Polars cannot verify that within the hour groups.
+    latest = day_hours.join_asof(
+        hourly, left_on="as_of", right_on="known_time", by="valid_time", strategy="backward",
+        check_sortedness=False,
+    )  # fmt: skip
+    rank = {name: i for i, name in enumerate(FLIGHT_CATEGORIES)}
+    prevailing = pl.col("flight_category").replace_strict(rank, default=None)
+    covered = pl.col("product_id").is_not_null()
+    thunder = pl.any_horizontal(
+        *(pl.col(c).fill_null(False) for c in ("has_thunder", "tempo_thunder", "prob_thunder"))
+    )
+    snow = pl.any_horizontal(*(pl.col(c).fill_null(False) for c in ("has_snow", "tempo_snow")))
+    hours_of = {"taf_day_ifr_hours": prevailing <= rank["IFR"], "taf_day_thunder_hours": thunder,
+                "taf_day_snow_hours": snow}  # fmt: skip
+    summary = latest.group_by("as_of", "target_utc", "target_end_utc").agg(
+        taf_day_hours=covered.sum(),
+        newest_sent=pl.col("sent_at").max(),
+        taf_day_amendment=pl.col("is_amendment").sort_by("sent_at", nulls_last=False).last(),
+        prevailing_rank=prevailing.min(),
+        worst_rank=pl.col("worst_flight_category").replace_strict(rank, default=None).min(),
+        **{name: (covered & hour).sum() for name, hour in hours_of.items()},
+        taf_day_max_wind_kt=pl.col("wind_speed_kt").max(),
+        taf_day_max_gust_kt=pl.col("wind_gust_kt").max(),
+        taf_day_min_ceiling_ft=pl.col("ceiling_ft").min(),
+        taf_day_min_visibility_sm=pl.col("visibility_sm").min(),
+        taf_day_max_prob_pct=pl.col("prob_pct").max(),
+    )
+    category = dict(enumerate(FLIGHT_CATEGORIES))
+    features = summary.with_columns(
+        # Null rather than 0 hours when no TAF reaches the day.
+        *(pl.when(pl.col("taf_day_hours") > 0).then(pl.col(name)).alias(name) for name in hours_of),
+        taf_day_age_min=_minutes(pl.col("as_of") - pl.col("newest_sent")),
+        taf_day_flight_category=pl.col("prevailing_rank").replace_strict(category, default=None),
+        taf_day_worst_flight_category=pl.col("worst_rank").replace_strict(category, default=None),
+    ).drop("newest_sent", "prevailing_rank", "worst_rank")
+    return _per_key(spine, features, ["as_of", "target_utc", "target_end_utc"])
+
+
+def _versions(tables: Tables) -> pl.DataFrame:
+    """ORD's general program versions, with how long each stays current and its assumed end."""
+    return tables.program_versions.filter(
         (pl.col("airport") == "ORD") & (pl.col("scope") == "general")
     ).with_columns(
         valid_until=pl.coalesce("valid_to", FAR_FUTURE),
         end_assumed=pl.coalesce("end_utc", pl.col("start_utc") + OPEN_PROGRAM),
     )
-    keys = spine.select("as_of", "target_utc").unique()
-    current = keys.join_where(
-        versions,
-        pl.col("known_time") <= pl.col("as_of"),
-        pl.col("end_assumed") > pl.col("as_of"),
-    ).filter(pl.col("valid_until") > pl.col("as_of"))
-    now = (pl.col("start_utc") <= pl.col("as_of")) & (pl.col("as_of") < pl.col("end_assumed"))
+
+
+def programs(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
+    """ORD's general GDPs and ground stops as known at as_of: in effect now (minutes since the
+    start, to the announced end), announced to cover the target, and how many were issued in
+    the last 24 hours."""
     at_target = (pl.col("start_utc") <= pl.col("target_utc")) & (
         pl.col("target_utc") < pl.col("end_assumed")
     )
+    return _programs(spine, tables, ["target_utc"], at_target, pl.col("as_of"))
+
+
+def day_programs(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
+    """As ``programs``, with the target the whole day: announced to cover any part of it."""
+    at_target = (pl.col("start_utc") < pl.col("target_end_utc")) & (
+        pl.col("end_assumed") > pl.col("target_utc")
+    )
+    # Issued on the day, a forecast also sees programs that ended since midnight.
+    after = pl.min_horizontal("as_of", "target_utc")
+    return _programs(spine, tables, ["target_utc", "target_end_utc"], at_target, after)
+
+
+def _programs(spine: pl.DataFrame, tables: Tables, target: list[str], at_target: pl.Expr,
+              after: pl.Expr) -> pl.DataFrame:  # fmt: skip
+    """Program features for the spine's ``target`` columns: versions current at as_of that end
+    after ``after``, announced to cover the target when ``at_target``."""
+    versions = _versions(tables)
+    keys = spine.select("as_of", *target).unique().with_columns(after=after)
+    current = keys.join_where(
+        versions,
+        pl.col("known_time") <= pl.col("as_of"),
+        pl.col("end_assumed") > pl.col("after"),
+    ).filter(pl.col("valid_until") > pl.col("as_of"))
+    now = (pl.col("start_utc") <= pl.col("as_of")) & (pl.col("as_of") < pl.col("end_assumed"))
     aggregates = []
     for kind, prefix in (("gdp", "atc_gdp"), ("ground_stop", "atc_gs")):
         is_kind = pl.col("program_type") == kind
@@ -161,7 +244,7 @@ def programs(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
             .max().alias(f"{prefix}_to_end_min"),
             (is_kind & at_target).any().alias(f"{prefix}_at_target"),
         ]  # fmt: skip
-    state = current.group_by("as_of", "target_utc").agg(aggregates)
+    state = current.group_by("as_of", *target).agg(aggregates)
     issued = (
         keys.select("as_of")
         .unique()
@@ -177,15 +260,17 @@ def programs(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
             atc_gs_issued_24h=(pl.col("program_type") == "ground_stop").sum(),
         )
     )
-    features = keys.join(state, on=["as_of", "target_utc"], how="left").join(
-        issued, on="as_of", how="left"
+    features = (
+        keys.drop("after")
+        .join(state, on=["as_of", *target], how="left")
+        .join(issued, on="as_of", how="left")
     )
     flags = [c for c in features.columns if c.endswith(("_now", "_at_target"))]
     counts = ["atc_gdp_issued_24h", "atc_gs_issued_24h"]
     features = features.with_columns(
         *(pl.col(c).fill_null(False) for c in flags), *(pl.col(c).fill_null(0) for c in counts)
     )
-    return _per_key(spine, features, ["as_of", "target_utc"])
+    return _per_key(spine, features, ["as_of", *target])
 
 
 def _recent_counts(
@@ -227,12 +312,8 @@ def operations(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
     as_of (count, mean delay, share 15+ min late), and the departures scheduled in the last
     hour, so the ratio shows flights held."""
     keys = spine.select("as_of").unique().sort("as_of")
-    legs = tables.legs
-    deps = legs.filter((pl.col("direction") == "departure") & pl.col("dep_utc").is_not_null())
-    arrs = legs.filter((pl.col("direction") == "arrival") & pl.col("arr_utc").is_not_null())
-    departed = deps.select(time="dep_utc", delay="dep_delay")
-    arrived = arrs.select(time="arr_utc", delay="arr_delay")
-    scheduled = legs.filter(pl.col("direction") == "departure").select(
+    departed, arrived = _happened(tables)
+    scheduled = tables.legs.filter(pl.col("direction") == "departure").select(
         time="sched_dep_utc", delay=pl.lit(None, dtype=pl.Int32)
     )
     features = keys
@@ -252,6 +333,26 @@ def operations(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
         )
     )
     return _per_key(spine, features, ["as_of"])
+
+
+def previous_day(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
+    """ORD's departures and arrivals that happened in the 24 hours before as_of (count, mean
+    delay, share 15+ min late): the previous day's state (study §6.4)."""
+    keys = spine.select("as_of").unique().sort("as_of")
+    departed, arrived = _happened(tables)
+    features = keys.join(
+        _recent_counts(keys, departed, PREVIOUS_DAY, "ops_dep_24h"), on="as_of"
+    ).join(_recent_counts(keys, arrived, PREVIOUS_DAY, "ops_arr_24h"), on="as_of")
+    return _per_key(spine, features, ["as_of"])
+
+
+def _happened(tables: Tables) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """ORD departures and arrivals that happened (``time``, ``delay``)."""
+    legs = tables.legs
+    deps = legs.filter((pl.col("direction") == "departure") & pl.col("dep_utc").is_not_null())
+    arrs = legs.filter((pl.col("direction") == "arrival") & pl.col("arr_utc").is_not_null())
+    return (deps.select(time="dep_utc", delay="dep_delay"),
+            arrs.select(time="arr_utc", delay="arr_delay"))  # fmt: skip
 
 
 def demand(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
@@ -275,6 +376,27 @@ def demand(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
         .with_columns(pl.col("dem_departures").fill_null(0), pl.col("dem_arrivals").fill_null(0))
         .drop("target_hour")
     )
+
+
+def day_demand(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
+    """ORD departures and arrivals scheduled on the target day, and in its busiest hour."""
+    parts = []
+    for direction, column, name in (("departure", "sched_dep_utc", "departures"),
+                                    ("arrival", "sched_arr_utc", "arrivals")):  # fmt: skip
+        parts.append(
+            tables.legs.filter(pl.col("direction") == direction)
+            .group_by(
+                target_date=pl.col(column).dt.convert_time_zone(LOCAL_TZ).dt.date(),
+                hour=pl.col(column).dt.truncate("1h"),
+            )
+            .agg(n=pl.len())
+            .group_by("target_date")
+            .agg(**{f"dem_{name}": pl.col("n").sum(), f"dem_peak_{name}": pl.col("n").max()})
+        )
+    rows = spine.select("row", "target_date")
+    for part in parts:
+        rows = rows.join(part, on="target_date", how="left")
+    return rows.drop("target_date").with_columns(pl.exclude("row").fill_null(0))
 
 
 def flight(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
