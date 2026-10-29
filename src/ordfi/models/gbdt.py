@@ -114,10 +114,36 @@ DAY_FEATURES = (
     "ops_arr_24h_late15_share",
     "dem_departures", "dem_peak_departures", "dem_arrivals", "dem_peak_arrivals",
 )  # fmt: skip
-FEATURES = {"hours": OUTLOOK_FEATURES, "days": DAY_FEATURES}
+# Every feature of the departures spine: the airport's state, as for the hours, and the flight's
+# schedule and inbound aircraft (flt_, inb_).
+DEPARTURE_FEATURES = (
+    "cal_local_hour", "cal_day_of_week", "cal_month", "cal_is_weekend", "cal_is_holiday",
+    "cal_days_to_holiday", "cal_days_since_holiday",
+    "wx_age_min", "wx_flight_category", "wx_visibility_mi", "wx_ceiling_ft", "wx_wind_speed_kt",
+    "wx_wind_gust_kt", "wx_temp_c", "wx_thunder", "wx_snow", "wx_freezing",
+    "wx_min_visibility_3h", "wx_min_ceiling_3h", "wx_thunder_3h", "wx_snow_3h",
+    "taf_available", "taf_lead_min", "taf_is_amendment", "taf_flight_category",
+    "taf_worst_flight_category", "taf_visibility_sm", "taf_ceiling_ft", "taf_wind_speed_kt",
+    "taf_wind_gust_kt", "taf_thunder", "taf_snow", "taf_prob_pct",
+    "atc_gdp_now", "atc_gdp_since_start_min", "atc_gdp_to_end_min", "atc_gdp_at_target",
+    "atc_gs_now", "atc_gs_since_start_min", "atc_gs_to_end_min", "atc_gs_at_target",
+    "atc_gdp_issued_24h", "atc_gs_issued_24h", *PROGRAM_CLIMATE, *STAFFING_DAYS,
+    "ops_dep_1h_n", "ops_dep_1h_delay_mean", "ops_dep_1h_late15_share", "ops_dep_3h_n",
+    "ops_dep_3h_delay_mean", "ops_dep_3h_late15_share", "ops_arr_1h_n", "ops_arr_1h_delay_mean",
+    "ops_arr_1h_late15_share", "ops_arr_3h_n", "ops_arr_3h_delay_mean", "ops_arr_3h_late15_share",
+    "ops_sched_dep_1h_n", "ops_dep_flow_1h",
+    "dem_departures", "dem_arrivals",
+    "flt_carrier", "flt_marketing_carrier", "flt_dest", "flt_distance", "flt_sched_block_min",
+    "inb_found", "inb_origin", "inb_sched_turn_min", "inb_departed", "inb_arrived",
+    "inb_dep_delay", "inb_arr_delay", "inb_known_late_min", "inb_slack_min",
+)  # fmt: skip
+FEATURES = {"hours": OUTLOOK_FEATURES, "days": DAY_FEATURES, "departures": DEPARTURE_FEATURES}
 # Months held out for early stopping and recalibration: a year of hours, but two years of days,
 # which give 30 times fewer rows (chosen on the development months, docs/backtests/).
-VALIDATION_MONTHS = {"hours": 12, "days": 24}
+VALIDATION_MONTHS = {"hours": 12, "days": 24, "departures": 12}
+# Threads per departure fit: on 2.6 M rows LightGBM's threads scale poorly past six, so the
+# backtest fits three departure folds at once instead (backtest.default_workers).
+DEPARTURE_THREADS = 6
 GROUPS = ("cal_", "wx_", "taf_", "mos_", "nbm_", "atc_", "ops_", "dem_")
 
 
@@ -171,6 +197,14 @@ def outlook(name: str = "gbdt", groups: Sequence[str] = GROUPS, spine: str = "ho
     features = [f for f in FEATURES[spine]
                 if f.startswith(tuple(groups)) and not f.startswith(tuple(without))]  # fmt: skip
     return GBDT(name, features, **{"validation_months": VALIDATION_MONTHS[spine], **options})
+
+
+def departure(name: str = "gbdt", without: Sequence[str] = ()) -> GBDT:
+    """The departure GBDT: every feature of the departures spine less those ``without``
+    (prefixes), with ``DEPARTURE_THREADS`` threads per fit."""
+    features = [f for f in DEPARTURE_FEATURES if not f.startswith(tuple(without))]
+    params = {**PARAMS, "num_threads": DEPARTURE_THREADS}
+    return GBDT(name, features, validation_months=VALIDATION_MONTHS["departures"], params=params)
 
 
 def encode(

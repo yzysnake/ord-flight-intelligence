@@ -9,7 +9,7 @@ import polars as pl
 import pytest
 
 from ordfi.features.spines import days
-from ordfi.models import backtest
+from ordfi.models import backtest, baselines
 from ordfi.models.gbdt import FEATURES
 
 
@@ -142,7 +142,23 @@ def test_the_cli_writes_the_run_and_prints_its_summary(
         backtest.main([*args[:1], "day_gdp", *args[2:]])
 
 
-def test_only_the_departure_tasks_run_in_one_process_by_default() -> None:
+def test_the_departure_tasks_run_three_folds_at_once_by_default() -> None:
     for task in ("hour_gdp", "day_bad60"):
         assert backtest.default_workers(backtest.TASKS[task]) == (os.cpu_count() or 1)
-    assert backtest.default_workers(backtest.TASKS["dep_late15"]) == 1
+    departures = backtest.TASKS["dep_late15"]
+    assert backtest.default_workers(departures) == 3 and departures.refit_months == 3
+
+
+def test_a_block_of_months_learns_only_what_its_first_month_could() -> None:
+    first = [date(2024, m, 1) for m in (9, 10, 11, 12)]
+    assert backtest.blocks(first, 3) == [tuple(first[:3]), (first[3],)]
+    months = [date(2019, m, 1) for m in range(1, 10)]
+    # Events from June: a September forecast may learn from June, but not one refit in July.
+    frame = pl.DataFrame({
+        "flight_key": [f"f{m.month}" for m in months], "local_date": months,
+        "y": [int(m >= date(2019, 6, 1)) for m in months], "month": months,
+    })  # fmt: skip
+    block = (date(2019, 7, 1), date(2019, 8, 1), date(2019, 9, 1))
+    (fold,) = backtest._fold("flight_key", [baselines.base_rate()], frame, "1h", 2, block)
+    assert fold["p"].to_list() == [0.0, 0.0, 0.0]  # trained to April, before any event
+    assert fold["test_month"].to_list() == list(block)

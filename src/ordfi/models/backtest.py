@@ -73,6 +73,7 @@ class Task:
     description: str = ""
     track_record: bool = False  # alerts and recalibration from each month's track record
     label_lag: int = LABEL_LAG  # months between the last training month and the test month
+    refit_months: int = 1  # test months forecast by one fit, on what was known before the first
     advisory_outcomes: bool = False  # outcomes known from the FAA advisories by the next day
 
 
@@ -81,8 +82,11 @@ def _late(minutes: int) -> pl.Expr:
 
 
 def _departure_models() -> list[Model]:
+    """The baselines, then the departure GBDT, with and without the inbound aircraft (whose
+    tails BTS records after the fact)."""
     return [baselines.base_rate(), baselines.calendar(), baselines.route(),
-            baselines.persistence(), baselines.slack_rule()]  # fmt: skip
+            baselines.persistence(), baselines.slack_rule(), gbdt.departure(),
+            gbdt.departure("gbdt_no_inbound", without=("inb_",))]  # fmt: skip
 
 
 # Features left out (by prefix), one ablation each: their value to the outlook (study §6.5).
@@ -124,12 +128,15 @@ def _day_models(*baseline: Model, without: tuple[str, ...] = ()) -> list[Model]:
 TASKS = {
     task.name: task
     for task in (
+        # Departure fits are 25 times larger than the hours': refit every quarter.
         Task("dep_late15", "departures", _late(15), _departure_models,
-             description="An ORD departure leaves 15+ min late or is cancelled (T2)"),
+             description="An ORD departure leaves 15+ min late or is cancelled (T2)",
+             refit_months=3),
         Task("dep_late60", "departures", _late(60), _departure_models,
-             description="An ORD departure leaves 60+ min late or is cancelled (T2)"),
+             description="An ORD departure leaves 60+ min late or is cancelled (T2)",
+             refit_months=3),
         Task("dep_cancelled", "departures", pl.col("y_cancelled"), _departure_models,
-             description="An ORD departure is cancelled (T5)"),
+             description="An ORD departure is cancelled (T5)", refit_months=3),
         Task("hour_bad60", "hours", pl.col("y_late60_share") >= BAD_HOUR_SHARE,
              lambda: _hour_models(baselines.persistence(), without=(*PROGRAMS_ONLY, *WINDOW)),
              rows=pl.col("y_n_departures") >= BAD_HOUR_MIN_DEPARTURES,
@@ -207,19 +214,27 @@ def models_for(task: Task, names: Sequence[str] | None = None) -> list[Model]:
 
 
 def _fold(key: str, models: list[Model], frame: pl.DataFrame, horizon: str, lag: int,
-          month: date) -> list[pl.DataFrame]:  # fmt: skip
-    """Every model's forecasts for one test month at one horizon."""
+          months: tuple[date, ...]) -> list[pl.DataFrame]:  # fmt: skip
+    """Every model's forecasts for a block of test months at one horizon, fitted on the months
+    known before the first of them."""
     available = frame["month"].unique().sort().to_list()
-    test = frame.filter(pl.col("month") == month)
-    train = frame.filter(pl.col("month").is_in(training_months(month, available, lag)))
+    test = frame.filter(pl.col("month").is_in(months))
+    train = frame.filter(pl.col("month").is_in(training_months(months[0], available, lag)))
     if test.is_empty() or train.is_empty():
         return []
-    rows = test.select(key, "local_date", LABEL)
+    rows = test.select(key, "local_date", LABEL, "month")
     return [
         rows.with_columns(horizon=pl.lit(horizon), model=pl.lit(model.name),
-                          test_month=pl.lit(month), p=model.fit_predict(train, test))
+                          test_month=pl.col("month"), p=model.fit_predict(train, test))
+        .drop("month")
         for model in models
     ]  # fmt: skip
+
+
+def blocks(months: Sequence[date], size: int) -> list[tuple[date, ...]]:
+    """The test months in order, ``size`` at a time (the last block may be shorter)."""
+    ordered = sorted(months)
+    return [tuple(ordered[i : i + size]) for i in range(0, len(ordered), size)]
 
 
 # Key, models, rows, horizon and label lag of a fold.
@@ -232,24 +247,26 @@ def _share(*inputs: Any) -> None:
     _SHARED["inputs"] = (key, models, frame, horizon, lag)
 
 
-def _shared_fold(month: date) -> list[pl.DataFrame]:
+def _shared_fold(months: tuple[date, ...]) -> list[pl.DataFrame]:
     key, models, frame, horizon, lag = _SHARED["inputs"]
-    return _fold(key, models, frame, horizon, lag, month)
+    return _fold(key, models, frame, horizon, lag, months)
 
 
 def predict(task: Task, horizons: list[str], test_months: list[date], root: Path,
             models: list[Model], workers: int = 1) -> pl.DataFrame:  # fmt: skip
-    """Every model's forecasts for every test month and horizon, ``workers`` months at once."""
+    """Every model's forecasts for every test month and horizon, ``workers`` folds at once
+    (a fold is a block of ``task.refit_months`` months)."""
     parts = []
+    folds_of = blocks(test_months, task.refit_months)
     for horizon in horizons:
         frame = load(task, horizon, models, root)
         inputs: Inputs = (_key(task), models, frame, horizon, task.label_lag)
         if workers == 1:
-            folds = [_fold(*inputs, month) for month in test_months]
+            folds = [_fold(*inputs, months) for months in folds_of]
         else:
             with ProcessPoolExecutor(workers, mp_context=get_context("spawn"),
                                      initializer=_share, initargs=inputs) as pool:  # fmt: skip
-                folds = list(pool.map(_shared_fold, test_months))
+                folds = list(pool.map(_shared_fold, folds_of))
         parts += [part for fold in folds for part in fold]
     return pl.concat(parts)
 
@@ -415,10 +432,10 @@ def alert_summary(alerts: pl.DataFrame) -> pl.DataFrame:
 
 
 def default_workers(task: Task) -> int:
-    """One worker per CPU for the hourly and daily tasks, whose GBDT fits dominate; one process
-    for the departure tasks, whose fits take a second and whose rows would be copied to each
-    worker."""
-    return 1 if task.spine == "departures" else (os.cpu_count() or 1)
+    """One worker per CPU for the hourly and daily tasks, whose GBDT fits dominate; three for
+    the departure tasks, each fit using ``gbdt.DEPARTURE_THREADS`` threads, since their rows
+    (1.6 GB a horizon) are copied to every worker."""
+    return 3 if task.spine == "departures" else (os.cpu_count() or 1)
 
 
 def _month(text: str) -> date:
