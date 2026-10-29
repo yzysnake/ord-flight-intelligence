@@ -194,6 +194,8 @@ PROGRAM_FLAGS = (
     (pl.col("program_type") == "gdp").any().alias("y_gdp"),
     (pl.col("program_type") == "ground_stop").any().alias("y_ground_stop"),
 )
+# The windowed ground-stop event of the hours spine: the target hour and the two after it.
+GROUND_STOP_WINDOW = timedelta(hours=3)
 
 
 def _outcome_labels(spine: pl.DataFrame, key: str, deps: pl.DataFrame,
@@ -212,14 +214,14 @@ def _outcome_labels(spine: pl.DataFrame, key: str, deps: pl.DataFrame,
 
 
 def hour_labels(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
-    """Each hour's ORD departures: count, shares late (15, 60 min or cancelled), cancelled,
-    and whether a general GDP or ground stop was in effect at any time in the hour."""
+    """Each hour's ORD departures: count, shares late (15, 60 min or cancelled), cancelled;
+    whether a general GDP or ground stop was in effect at any time in the hour; and whether a
+    general ground stop was at any time in the window of hours from it (``y_ground_stop_3h``)."""
     deps = _departure_outcomes(tables.legs, pl.col("sched_dep_utc").dt.truncate("1h"),
                                "target_utc")  # fmt: skip
+    targets = spine.select("target_utc").unique()
     flags = (
-        spine.select("target_utc")
-        .unique()
-        .join_where(
+        targets.join_where(
             _general_programs(tables).with_columns(
                 start_hour=pl.col("start_utc").dt.truncate("1h")
             ),
@@ -229,7 +231,22 @@ def hour_labels(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
         .group_by("target_utc")
         .agg(PROGRAM_FLAGS)
     )
-    return _outcome_labels(spine, "target_utc", deps, flags)
+    stops = _general_programs(tables).filter(pl.col("program_type") == "ground_stop")
+    window = (
+        targets.join_where(
+            stops,
+            pl.col("start_utc") < pl.col("target_utc") + GROUND_STOP_WINDOW,
+            pl.col("end_utc") > pl.col("target_utc"),
+        )
+        .select("target_utc", y_ground_stop_3h=pl.lit(True))
+        .unique()
+    )
+    in_window = spine.select("row", "target_utc").join(window, on="target_utc", how="left")
+    return (
+        _outcome_labels(spine, "target_utc", deps, flags)
+        .join(in_window.drop("target_utc"), on="row")
+        .with_columns(pl.col("y_ground_stop_3h").fill_null(False))
+    )
 
 
 def day_labels(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:

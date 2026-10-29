@@ -139,7 +139,7 @@ def day_persistence() -> Climatology:
                        derived={"previous_day": PREVIOUS_DAY_DELAY})  # fmt: skip
 
 
-def announced(kind: str) -> Climatology:
+def announced(kind: str, target: str | None = None) -> Climatology:
     """The rate by whether a GDP or ground stop (``kind``: gdp, gs) is in effect at as_of and
-    announced to cover the target."""
-    return Climatology("announced", [[f"atc_{kind}_now", f"atc_{kind}_at_target"]])
+    announced to cover the target (``target``: the column saying so, default the target's)."""
+    return Climatology("announced", [[f"atc_{kind}_now", target or f"atc_{kind}_at_target"]])
