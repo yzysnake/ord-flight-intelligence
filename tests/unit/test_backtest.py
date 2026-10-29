@@ -162,3 +162,11 @@ def test_a_block_of_months_learns_only_what_its_first_month_could() -> None:
     (fold,) = backtest._fold("flight_key", [baselines.base_rate()], frame, "1h", 2, block)
     assert fold["p"].to_list() == [0.0, 0.0, 0.0]  # trained to April, before any event
     assert fold["test_month"].to_list() == list(block)
+
+
+def test_departure_models_never_read_a_missing_tail_as_a_cancellation() -> None:
+    for name in ("dep_late15", "dep_late60"):  # only flights with a tail in BTS
+        rows = pl.DataFrame({"y_no_tail": [True, False]}).filter(backtest.TASKS[name].rows)
+        assert rows["y_no_tail"].to_list() == [False]
+    cancelled = {m.name: m for m in backtest.TASKS["dep_cancelled"].models()}
+    assert not any(f.startswith("inb_") for f in cancelled["gbdt"].columns())

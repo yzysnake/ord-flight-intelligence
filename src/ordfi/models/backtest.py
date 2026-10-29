@@ -81,12 +81,20 @@ def _late(minutes: int) -> pl.Expr:
     return (pl.col("y_dep_delay") >= minutes) | pl.col("y_cancelled")
 
 
-def _departure_models() -> list[Model]:
-    """The baselines, then the departure GBDT, with and without the inbound aircraft (whose
-    tails BTS records after the fact)."""
-    return [baselines.base_rate(), baselines.calendar(), baselines.route(),
-            baselines.persistence(), baselines.slack_rule(), gbdt.departure(),
-            gbdt.departure("gbdt_no_inbound", without=("inb_",))]  # fmt: skip
+def _departure_models(inbound: bool = True) -> list[Model]:
+    """The baselines, then the departure GBDT, with and without the inbound aircraft (or
+    only without it)."""
+    models = [baselines.base_rate(), baselines.calendar(), baselines.route(),
+              baselines.persistence(), baselines.slack_rule()]  # fmt: skip
+    if not inbound:
+        return [*models, gbdt.departure(without=("inb_",))]
+    return [*models, gbdt.departure(), gbdt.departure("gbdt_no_inbound", without=("inb_",))]
+
+
+# BTS leaves the tail blank for some cancelled flights, and only for those, so a missing inbound
+# would reveal the cancellation (docs/features/). The delay tasks keep the flights with a tail;
+# the cancellation task keeps every flight and reads no inbound aircraft.
+WITH_TAIL = ~pl.col("y_no_tail")
 
 
 # Features left out (by prefix), one ablation each: their value to the outlook (study §6.5).
@@ -129,13 +137,14 @@ TASKS = {
     task.name: task
     for task in (
         # Departure fits are 25 times larger than the hours': refit every quarter.
-        Task("dep_late15", "departures", _late(15), _departure_models,
-             description="An ORD departure leaves 15+ min late or is cancelled (T2)",
-             refit_months=3),
-        Task("dep_late60", "departures", _late(60), _departure_models,
-             description="An ORD departure leaves 60+ min late or is cancelled (T2)",
-             refit_months=3),
-        Task("dep_cancelled", "departures", pl.col("y_cancelled"), _departure_models,
+        Task("dep_late15", "departures", _late(15), _departure_models, rows=WITH_TAIL,
+             description="An ORD departure leaves 15+ min late or is cancelled (flights with "
+                         "a tail in BTS; T2)", refit_months=3),
+        Task("dep_late60", "departures", _late(60), _departure_models, rows=WITH_TAIL,
+             description="An ORD departure leaves 60+ min late or is cancelled (flights with "
+                         "a tail in BTS; T2)", refit_months=3),
+        Task("dep_cancelled", "departures", pl.col("y_cancelled"),
+             lambda: _departure_models(inbound=False),
              description="An ORD departure is cancelled (T5)", refit_months=3),
         Task("hour_bad60", "hours", pl.col("y_late60_share") >= BAD_HOUR_SHARE,
              lambda: _hour_models(baselines.persistence(), without=(*PROGRAMS_ONLY, *WINDOW)),
