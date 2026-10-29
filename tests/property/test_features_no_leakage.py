@@ -225,23 +225,24 @@ def check(spine_name: str, tables: Tables, picks: list[int]) -> None:
         assert known.drop("row").row(0, named=True) == expected.drop("row").row(0, named=True)
 
 
-PROGRAM_GROUPS = {"hours": groups.programs, "days": groups.day_programs}
+# The groups that read program versions (the window announces programs over its hours).
+PROGRAM_GROUPS = {"hours": [groups.programs, groups.window], "days": [groups.day_programs]}
 
 
 def check_programs(spine_name: str, tables: Tables, picks: list[int]) -> None:
     """The program features alone, for every row at each picked as_of (for days, every
     as_of): from the full tables == from the tables as known then."""
-    group = PROGRAM_GROUPS[spine_name]
     spine = world_spine(spine_name, tables).with_row_index("row")
-    full = group(spine, tables)
     times = spine["as_of"].unique().sort()
     if spine_name == "hours":
         times = times.gather([p % len(times) for p in picks]).unique()
-    for as_of in times:
-        rows = spine.filter(pl.col("as_of") == as_of)
-        known = group(rows, visible(tables, as_of)).sort("row")
-        expected = full.join(rows.select("row"), on="row", how="semi").sort("row")
-        assert known.rows(named=True) == expected.rows(named=True)
+    for group in PROGRAM_GROUPS[spine_name]:
+        full = group(spine, tables)
+        for as_of in times:
+            rows = spine.filter(pl.col("as_of") == as_of)
+            known = group(rows, visible(tables, as_of)).sort("row")
+            expected = full.join(rows.select("row"), on="row", how="semi").sort("row")
+            assert known.rows(named=True) == expected.rows(named=True)
 
 
 picks = st.lists(st.integers(min_value=0, max_value=10_000), min_size=1, max_size=5)

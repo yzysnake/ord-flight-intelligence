@@ -47,7 +47,7 @@ def write_store(root: Path, months: list[date], gdp: dict[date, bool],
         frame = frame.with_columns(
             cal_month=pl.lit(month.month), cal_day_of_week=pl.col("target_utc").dt.weekday(),
             atc_gdp_now=pl.lit(False), atc_gdp_at_target=pl.lit(False),
-            y_gdp=pl.lit(gdp.get(month, False)),
+            y_gdp=pl.lit(gdp.get(month, False)), y_ground_stop_3h=pl.lit(gdp.get(month, False)),
         )  # fmt: skip
         unread = [name for name in FEATURES[spine] if name not in frame.columns]
         frame = frame.with_columns(
@@ -71,7 +71,8 @@ def write_store(root: Path, months: list[date], gdp: dict[date, bool],
     ).write_parquet(core / "atc_program_interval.parquet")
 
 
-@pytest.mark.parametrize(("task", "spine"), [("hour_gdp", "hours"), ("day_gdp", "days")])
+@pytest.mark.parametrize(("task", "spine"), [("hour_gdp", "hours"), ("day_gdp", "days"),
+                                             ("hour_ground_stop_3h", "hours")])  # fmt: skip
 def test_a_run_never_learns_from_months_it_could_not_have_seen(
     tmp_path: Path, task: str, spine: str
 ) -> None:
@@ -86,7 +87,7 @@ def test_a_run_never_learns_from_months_it_could_not_have_seen(
     assert set(predictions["model"]) == {
         "base_rate", "calendar", "announced", "gbdt_schedule", "gbdt", "gbdt_no_taf",
         "gbdt_no_guidance", "gbdt_no_atc", "gbdt_no_climate", "gbdt_no_staffing", "gbdt_no_ops",
-        "gbdt_recent", "gbdt_shrunk",
+        "gbdt_recent", "gbdt_shrunk", *(["gbdt_no_window"] if task.endswith("_3h") else []),
     }  # fmt: skip
     metrics = pl.read_parquet(out / "metrics.parquet")
     assert set(metrics["slice"]) == set(backtest.SLICES)

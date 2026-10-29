@@ -55,6 +55,7 @@ Defined once in `ordfi.features.knowledge`, which also gives `visible(tables, as
 | `atc_` | all | ORD's general GDP and ground stop: in effect now, minutes since the start and to the announced end, announced to cover the target (for days, any part of it, including programs that ended earlier that day), how many were issued in the last 24 hours, the program climate: the local days among the last 7 and 30 with a GDP (ground stop) in effect (`atc_gdp_days_7d`, `atc_gdp_days_30d`, `atc_gs_days_7d`, `atc_gs_days_30d`), and the days among them with either one whose advisories had cited staffing (`atc_staffing_days_7d`, `atc_staffing_days_30d`) |
 | `ops_` | all | ORD departures and arrivals that happened in the last one and three hours (count, mean delay, share 15+ min late), and departures scheduled in the last hour against those that left (`ops_dep_flow_1h`). For days also the last 24 hours (`ops_dep_24h_*`, `ops_arr_24h_*`): the previous day's state |
 | `dem_` | all | ORD departures and arrivals scheduled in the target's hour; for days, on the target day and in its busiest hour (`dem_peak_departures`, `dem_peak_arrivals`) |
+| `taf_win_`, `mos_win_`, `nbm_win_`, `atc_win_`, `dem_win_` | hours | The 3 hours from the target hour, summed up like a day: the TAF's hours of thunder, IFR and snow, its worst flight category, strongest gust, lowest ceiling and visibility and highest PROB; the station guidance over the window (worst category, wind and gust, snow and freezing, IFR, thunder and severe probabilities); GDPs and ground stops announced to cover any part of it (`atc_win_gdp_announced`, `atc_win_gs_announced`); and the departures and arrivals scheduled in it. Only the windowed ground-stop task reads them |
 | `flt_` | departures | Operating and marketing carrier, destination, distance, scheduled block time |
 | `inb_` | departures | The aircraft's previous ORD arrival, from 6 hours out: scheduled turn, the inbound's departure and arrival delay so far, its known lateness and the turn slack left |
 
@@ -83,7 +84,7 @@ Null means unknown or absent: no ceiling reported (unlimited), no gusts, no TAF 
 ## Labels
 
 - `departures`: `y_dep_delay` (min), `y_cancelled`, `y_diverted`, `y_dep_bucket` (cancelled, ≤ 0, 1–14, 15–29, 30–59, 60–119, 120–179, ≥ 180 min), and `y_no_tail` (see the caveats).
-- `hours`: `y_n_departures`, shares delayed 15+ or 60+ min or cancelled (`y_late15_share`, `y_late60_share`), `y_cancelled_share`, and whether a general GDP or ground stop was in effect in the hour (`y_gdp`, `y_ground_stop`).
+- `hours`: `y_n_departures`, shares delayed 15+ or 60+ min or cancelled (`y_late15_share`, `y_late60_share`), `y_cancelled_share`, whether a general GDP or ground stop was in effect in the hour (`y_gdp`, `y_ground_stop`), and whether a general ground stop was in effect at any time in the 3 hours from it (`y_ground_stop_3h`).
 - `days`: the same for the local day's scheduled departures, and whether a general GDP or ground stop was in effect at any time in the day.
 
 ## Validation
@@ -96,7 +97,7 @@ Null means unknown or absent: no ceiling reported (unlimited), no gusts, no TAF 
   - the TAF regardless of its send time.
 - **The days spine** is checked on 60 worlds, every issue of each. It catches the day groups seeing past `as_of` (the TAF and the programs 6 hours ahead, the previous day 1 hour ahead) in 24 of 24 runs.
 - **The program climate** is checked on 60 worlds for both outlook spines. Counting programs that were not yet known, or their final versions, is caught in 8 of 8 runs.
-- **The program features alone** are also checked on 60 worlds of program versions only, at every issue of the days spine and at up to 12 forecast times of the hours spine. A leak through a later version shows only at a forecast between two versions, which full worlds rarely hold. Counting a program as staffing before its advisories cited it is caught in 8 of 8 runs (the full worlds alone catch it in 5 of 8 for hours and 6 of 8 for days), and the program-climate leak above in 8 of 8.
+- **The program features alone** are also checked on 60 worlds of program versions only, at every issue of the days spine and at up to 12 forecast times of the hours spine. A leak through a later version shows only at a forecast between two versions, which full worlds rarely hold. Counting a program as staffing before its advisories cited it is caught in 8 of 8 runs (the full worlds alone catch it in 5 of 8 for hours and 6 of 8 for days), and the program-climate leak above in 8 of 8. The window's announced programs are checked in both: letting the window see versions not yet known is caught in 8 of 8 runs by each.
 - **Station guidance** is in every world too: random GFS MOS and NBM runs with their lags. The test catches the guidance seeing runs 6 hours ahead, and runs used at their run time instead of their known time, on both outlook spines in 20 of 20 runs.
 - **No leakage on real data.** The same check finds no mismatches:
   - 300 rows per spine in Jan 2016, Jul 2019 and Feb 2024 (1,800 rows);

@@ -88,9 +88,10 @@ def _departure_models() -> list[Model]:
 # Features left out (by prefix), one ablation each: their value to the outlook (study §6.5).
 CLIMATE = ("atc_gdp_days_", "atc_gs_days_")
 STAFFING = ("atc_staffing_days_",)
+WINDOW = ("taf_win_", "mos_win_", "nbm_win_", "atc_win_", "dem_win_")  # the windowed task's
 ABLATIONS = {
     "taf": ("taf_",), "guidance": ("mos_", "nbm_"), "atc": ("atc_",), "climate": CLIMATE,
-    "staffing": STAFFING, "ops": ("ops_",),
+    "staffing": STAFFING, "window": WINDOW, "ops": ("ops_",),
 }  # fmt: skip
 # The program climate did not help the delay events on the development months; the staffing
 # cause was tried only for the GDP and ground-stop events.
@@ -100,12 +101,13 @@ PROGRAMS_ONLY = (*CLIMATE, *STAFFING)
 def _outlook_models(spine: str, *baseline: Model, without: tuple[str, ...] = ()) -> list[Model]:
     """The baselines, then the Outlook GBDT on the spine's features less ``without``: on the
     schedule alone (calendar and demand), on every feature, and without each of the TAF, the
-    station guidance, the FAA programs, the recent program climate, the staffing cause and the
-    operations."""
+    station guidance, the FAA programs, the recent program climate, the staffing cause, the
+    window's summaries and the operations (those the spine has)."""
     ablations = [gbdt.outlook(f"gbdt_no_{name}", spine=spine, without=(*without, *left_out))
                  for name, left_out in ABLATIONS.items()
-                 if not set(left_out) <= set(without)]  # fmt: skip
-    return [*baseline, gbdt.outlook("gbdt_schedule", ("cal_", "dem_"), spine),
+                 if not set(left_out) <= set(without)
+                 and any(f.startswith(left_out) for f in gbdt.FEATURES[spine])]  # fmt: skip
+    return [*baseline, gbdt.outlook("gbdt_schedule", ("cal_", "dem_"), spine, without=without),
             gbdt.outlook(spine=spine, without=without), *ablations]  # fmt: skip
 
 
@@ -129,18 +131,22 @@ TASKS = {
         Task("dep_cancelled", "departures", pl.col("y_cancelled"), _departure_models,
              description="An ORD departure is cancelled (T5)"),
         Task("hour_bad60", "hours", pl.col("y_late60_share") >= BAD_HOUR_SHARE,
-             lambda: _hour_models(baselines.persistence(), without=PROGRAMS_ONLY),
+             lambda: _hour_models(baselines.persistence(), without=(*PROGRAMS_ONLY, *WINDOW)),
              rows=pl.col("y_n_departures") >= BAD_HOUR_MIN_DEPARTURES,
              description="20 %+ of an hour's ORD departures leave 60+ min late or are cancelled "
                          "(hours with 10+ departures; T1)", track_record=True),
         Task("hour_gdp", "hours", pl.col("y_gdp"),
-             lambda: _hour_models(baselines.announced("gdp")),
+             lambda: _hour_models(baselines.announced("gdp"), without=WINDOW),
              description="A general ORD GDP is in effect during the hour (T1)",
              track_record=True, advisory_outcomes=True),
         Task("hour_ground_stop", "hours", pl.col("y_ground_stop"),
-             lambda: _hour_models(baselines.announced("gs")),
+             lambda: _hour_models(baselines.announced("gs"), without=WINDOW),
              description="A general ORD ground stop is in effect during the hour (T1)",
              track_record=True, advisory_outcomes=True),
+        Task("hour_ground_stop_3h", "hours", pl.col("y_ground_stop_3h"),
+             lambda: _hour_models(baselines.announced("gs", "atc_win_gs_announced")),
+             description="A general ORD ground stop is in effect at some time in the 3 hours "
+                         "from the target hour (T1)", track_record=True, advisory_outcomes=True),
         Task("day_bad60", "days", pl.col("y_late60_share") >= BAD_DAY_SHARE,
              lambda: _day_models(baselines.day_persistence(), without=PROGRAMS_ONLY),
              rows=pl.col("y_n_departures") >= BAD_DAY_MIN_DEPARTURES,

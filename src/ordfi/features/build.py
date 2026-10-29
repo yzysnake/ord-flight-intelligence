@@ -39,7 +39,7 @@ GROUPS: dict[str, list[groups.Group]] = {
     ],
     "hours": [
         groups.calendar, groups.weather, groups.taf, groups.guidance, groups.programs,
-        groups.operations, groups.demand,
+        groups.operations, groups.demand, groups.window,
     ],
     "days": [
         groups.day_calendar, groups.weather, groups.day_taf, groups.guidance,

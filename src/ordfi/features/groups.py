@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 import polars as pl
 
 from ordfi.features.knowledge import TAIL_LEAD, Tables
+from ordfi.features.spines import GROUND_STOP_WINDOW
 
 Group = Callable[[pl.DataFrame, Tables], pl.DataFrame]
 
@@ -534,6 +535,64 @@ def day_demand(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
     for part in parts:
         rows = rows.join(part, on="target_date", how="left")
     return rows.drop("target_date").with_columns(pl.exclude("row").fill_null(0))
+
+
+# The window's summaries, from the days spine's (taf_day_*) and the guidance over the window.
+WINDOW_TAF = ("hours", "thunder_hours", "ifr_hours", "snow_hours", "worst_flight_category",
+              "max_gust_kt", "min_ceiling_ft", "min_visibility_sm", "max_prob_pct")  # fmt: skip
+WINDOW_GUIDANCE = {
+    "mos": ("flight_category", "wind_speed_kt", "snow_pct", "thunder_6h_pct", "severe_6h_pct"),
+    "nbm": ("flight_category", "ifr_ceiling_pct", "ifr_visibility_pct", "snow_pct",
+            "freezing_pct", "wind_gust_kt", "thunder_3h_pct"),
+}  # fmt: skip
+
+
+def window(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
+    """The window of hours from the target hour (``GROUND_STOP_WINDOW``), summed up as the days
+    spine sums up a day, each as known at as_of: the TAF's hours of thunder, IFR and snow, its
+    worst flight category, strongest gust, lowest ceiling and visibility and highest PROB
+    (``taf_win_``); the station guidance over the window (``mos_win_``, ``nbm_win_``); GDPs
+    and ground stops announced to cover any part of it (``atc_win_``); and the departures and
+    arrivals scheduled in it (``dem_win_``)."""
+    span = spine.with_columns(target_end_utc=pl.col("target_utc") + GROUND_STOP_WINDOW)
+    renames: list[tuple[Group, dict[str, str]]] = [
+        (day_taf, {f"taf_day_{name}": f"taf_win_{name}" for name in WINDOW_TAF}),
+        (guidance, {f"{model}_{name}": f"{model}_win_{name}"
+                    for model, names in WINDOW_GUIDANCE.items() for name in names}),
+        (day_programs, {"atc_gdp_at_target": "atc_win_gdp_announced",
+                        "atc_gs_at_target": "atc_win_gs_announced"}),
+    ]  # fmt: skip
+    out = spine.select("row")
+    for group, names in renames:
+        out = out.join(group(span, tables).select("row", *names).rename(names), on="row")
+    return out.join(_window_demand(span, tables), on="row")
+
+
+def _window_demand(span: pl.DataFrame, tables: Tables) -> pl.DataFrame:
+    """ORD departures and arrivals scheduled in each row's window."""
+    hours = (
+        span.select("target_utc", "target_end_utc")
+        .unique()
+        .with_columns(hour=pl.datetime_ranges("target_utc", "target_end_utc", "1h", closed="left"))
+        .explode("hour")
+    )
+    for direction, column, name in (("departure", "sched_dep_utc", "dem_win_departures"),
+                                    ("arrival", "sched_arr_utc", "dem_win_arrivals")):  # fmt: skip
+        counts = (
+            tables.legs.filter(pl.col("direction") == direction)
+            .group_by(hour=pl.col(column).dt.truncate("1h"))
+            .agg(pl.len().alias(name))
+        )
+        hours = hours.join(counts, on="hour", how="left")
+    totals = hours.group_by("target_utc").agg(
+        pl.col("dem_win_departures").sum(), pl.col("dem_win_arrivals").sum()
+    )
+    return (
+        span.select("row", "target_utc")
+        .join(totals, on="target_utc", how="left")
+        .drop("target_utc")
+        .with_columns(pl.col("dem_win_departures", "dem_win_arrivals").fill_null(0))
+    )
 
 
 def flight(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:

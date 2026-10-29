@@ -49,6 +49,17 @@ PROGRAM_CLIMATE = (
     "atc_gdp_days_7d", "atc_gdp_days_30d", "atc_gs_days_7d", "atc_gs_days_30d",
 )  # fmt: skip
 STAFFING_DAYS = ("atc_staffing_days_7d", "atc_staffing_days_30d")
+# The hours spine's window of hours from the target (the windowed ground-stop task only).
+WINDOW_FEATURES = (
+    "taf_win_hours", "taf_win_thunder_hours", "taf_win_ifr_hours", "taf_win_snow_hours",
+    "taf_win_worst_flight_category", "taf_win_max_gust_kt", "taf_win_min_ceiling_ft",
+    "taf_win_min_visibility_sm", "taf_win_max_prob_pct",
+    "mos_win_flight_category", "mos_win_wind_speed_kt", "mos_win_snow_pct",
+    "mos_win_thunder_6h_pct", "mos_win_severe_6h_pct",
+    "nbm_win_flight_category", "nbm_win_ifr_ceiling_pct", "nbm_win_ifr_visibility_pct",
+    "nbm_win_snow_pct", "nbm_win_freezing_pct", "nbm_win_wind_gust_kt", "nbm_win_thunder_3h_pct",
+    "atc_win_gdp_announced", "atc_win_gs_announced", "dem_win_departures", "dem_win_arrivals",
+)  # fmt: skip
 # Station guidance for the target hour or day, the same on both outlook spines.
 GUIDANCE_FEATURES = (
     "mos_projections", "mos_flight_category", "mos_ceiling_category", "mos_visibility_category",
@@ -78,6 +89,7 @@ OUTLOOK_FEATURES = (
     "ops_arr_1h_late15_share", "ops_arr_3h_n", "ops_arr_3h_delay_mean", "ops_arr_3h_late15_share",
     "ops_sched_dep_1h_n", "ops_dep_flow_1h",
     "dem_departures", "dem_arrivals",
+    *WINDOW_FEATURES,
 )  # fmt: skip
 # Every feature of the days spine, by group.
 DAY_FEATURES = (
