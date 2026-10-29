@@ -22,7 +22,7 @@ make dbt-build SELECT=flight_leg+  # one model and its dependants
 | `weather_obs_hourly` | UTC hour | Latest and worst conditions per hour; empty hours kept. Use rows with `known_time <= as_of` |
 | `atc_program` | ATCSCC program advisory | GDP / ground stop periods parsed to UTC; proposals, cancellations and re-sent listings handled. Filter on `airport` |
 | `atc_program_interval` | ORD GDP or ground stop (2001 →) | Advisories chained into programs: start, end after revisions and cancellations, end reason, scope (general, carrier-only, CAT I/II). Final at `known_time` |
-| `atc_program_interval_version` | program × advisory | Each program as known after each of its advisories. As of time t: `known_time <= t < valid_to`; in effect if `start_utc <= t < end_utc` |
+| `atc_program_interval_version` | program × advisory | Each program as known after each of its advisories, with the cause that advisory states (`reason`). As of time t: `known_time <= t < valid_to`; in effect if `start_utc <= t < end_utc` |
 | `aircraft_rotation` | flown leg of an aircraft on a day it touches ORD (national) | Legs in flown order. Each row links to the previous leg (including the previous evening) and carries scheduled and actual ground times and station continuity. Post-hoc: tails are the aircraft that actually flew |
 | `taf_hourly` | ORD TAF × hour of its validity window (2000 →) | Prevailing forecast at the start of the hour plus TEMPO/PROB overlays, from our own bulletin parse (`ordfi.ingest.taf`). Flight categories, including the worst the TAF allows. As of time t: `known_time <= t`, latest issuance per hour |
 

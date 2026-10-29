@@ -7,6 +7,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- The staffing cause in the GDP and ground-stop outlook: `atc_staffing_days_7d` and `atc_staffing_days_30d`, with the `gbdt_no_staffing` ablation.
+  - The features count the days among the last 7 and 30 with a GDP or ground stop whose advisories had cited staffing, as known at `as_of`.
+  - `atc_program_interval_version` keeps the cause each advisory states (`reason`). Causes change mid-program: 10 of the 59 staffing programs began for weather or another cause.
+  - The feature build loads every version of the programs it needs.
+  - A focused property test checks the program features on worlds of program versions alone. Leaks through a later version (a cause cited later, the program climate) are caught in 8 of 8 runs. No mismatches in 1,805 real rows, 797 of them with staffing days.
+  - The development windows hold no staffing programs to learn from (three in 2023), so it was adopted on a rule of no harm there. It changed nothing in 2018–20 and −0.007 in summed skill in 2022–24.
+  - On Sep 2024 – Aug 2026 it did not help: summed skill 6.209 against 6.235 over the 20 task-horizons, every change within the intervals. Staffing days are still forecast at 27 % the evening before, against 88 % with a GDP.
 - The recent program climate in the GDP and ground-stop outlook: `atc_gdp_days_7d`, `atc_gdp_days_30d`, `atc_gs_days_7d` and `atc_gs_days_30d`, with the `gbdt_no_climate` ablation.
   - The features count the local days among the last 7 and 30 with a GDP or a ground stop, from the advisories known at `as_of`. The leakage property test covers them (injected leaks caught 8 of 8 times), with no mismatches in 1,350 real rows.
   - Why: the daily GDP and ground-stop forecasts ran low in the reported months (calibration errors 0.035–0.057). Programs came back in 2025–26, staffing programs among them, which the training years barely had.
