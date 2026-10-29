@@ -67,7 +67,7 @@ Daily, Brier skill on the same months (730 days):
 - It beats every baseline (climatology, persistence, announced programs) at every horizon and issue.
 - **The v0.1 skill targets** (above 0.10 at 24 h and 0.25 at 6 h, calibration error at most 0.03):
   - Bad hours and GDP hours meet them.
-  - Ground-stop hours meet the 24 h one but not the 6 h one.
+  - Ground-stop hours meet the 24 h one but not the 6 h one (0.170). That one is out of reach: forecasts that knew for certain whether the day had a ground stop, or whether ORD had thunder within an hour, would score at most 0.20 (`docs/backtests/`).
 - **The study's bad-day criterion** (60 %+ of bad days flagged at ≤ 1 false alarm per 10 normal days), with each month's alert threshold set on the year before it:
   - Two days ahead, the alert catches 59 % at 0.97 false alarms per 10, issued at least 24 h before every flight of the day.
   - The morning before, it catches 75 % at 1.22, and the evening before, 77 % at 1.14.
