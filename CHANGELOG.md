@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Shifts that wait for evidence (`ordfi.models.recent`).
+  - `shift_error` gives the track-record shift a standard error that counts each day once. The recalibration kinds `shrunk` (scaled by τ² / (τ² + se²)) and `tested` (only past two standard errors) use it.
+  - The GDP and ground-stop backtests score `gbdt_shrunk`: the shift to the level of the last 6 months, ending the month before (the advisories give those outcomes by the next day), shrunk with τ 0.25.
+  - Twelve variants were tried on both development windows, and none passed the rule fixed beforehand. Every one lost skill in 2022–24; the best daily variant lost 0.040 there and gained 0.121 in 2018–20. Even τ 0.05, tried afterwards, lost there. Not adopted.
+  - In the reported months it would have helped: summed daily skill 2.658 against 2.453, mean daily calibration error 0.029 against 0.046, GDP days forecast at 12.2 % against 14.4 % observed. Adopting it now would mean choosing on those months.
 - The staffing cause in the GDP and ground-stop outlook: `atc_staffing_days_7d` and `atc_staffing_days_30d`, with the `gbdt_no_staffing` ablation.
   - The features count the days among the last 7 and 30 with a GDP or ground stop whose advisories had cited staffing, as known at `as_of`.
   - `atc_program_interval_version` keeps the cause each advisory states (`reason`). Causes change mid-program: 10 of the 59 staffing programs began for weather or another cause.
