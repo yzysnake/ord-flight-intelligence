@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- A windowed ground-stop task, `hour_ground_stop_3h`: a general ORD ground stop at some time in the 3 hours from the target hour, at the hourly horizons.
+  - The hours spine gets the label `y_ground_stop_3h`, and 25 summaries of the window (`taf_win_`, `mos_win_`, `nbm_win_`, `atc_win_`, `dem_win_`), built by the day groups on a 3-hour span. Only this task reads them, and the other hourly models are unchanged.
+  - Checks: the property tests cover the window, and a leak through its announced programs is caught in 8 of 8 runs. No mismatches in 1,200 real hours.
+  - The window's features were adopted on both development windows: summed skill 0.677 → 0.764 (2018–20) and 1.038 → 1.145 (2022–24), with gains at every horizon.
+  - On Sep 2024 – Aug 2026: 0.196 at 24 h, 0.245 at 6 h, 0.291 at 1 h, against 0.132, 0.170 and 0.243 for single hours. Calibration error is at most 0.006.
 - How far ground-stop hours can go 6 h ahead (`docs/backtests/`), against the v0.1 target of 0.25 (they score 0.170).
   - Ground stops last 1.25 h (median), 95 % take effect at once, and two thirds of their hours are thunderstorm stops. Only 24 % of ground-stop hours had thunder at ORD in the hour.
   - Forecasts that knew the ground-stop day, or ORD's thunder within an hour, for certain would score at most 0.20. Only both at once reach 0.25 (0.31 and 0.248).

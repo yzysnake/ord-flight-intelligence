@@ -47,6 +47,7 @@ A run writes `data/backtests/<task>/<run>/`:
 | `hour_bad60` | hours with 10+ departures | 20 %+ of the hour's departures 60+ min late or cancelled | T1 |
 | `hour_gdp` | hours | a general GDP in effect during the hour | T1 |
 | `hour_ground_stop` | hours | a general ground stop in effect during the hour | T1 |
+| `hour_ground_stop_3h` | hours | a general ground stop in effect at some time in the 3 hours from the target hour | T1 |
 | `day_bad60` | local days | a bad day: 20 %+ of the day's departures 60+ min late or cancelled (the top decile of 2015 – Aug 2024) | T1 |
 | `day_gdp` | local days | a general GDP in effect at some time in the day | T1 |
 | `day_ground_stop` | local days | a general ground stop in effect at some time in the day | T1 |
@@ -706,3 +707,57 @@ One fit per development window, trained to three months before it, with the GBDT
 - **0.25 at 6 h is out of reach for single hours.** It asks for about the skill of perfect knowledge of both the day and the storms' hour.
 - **For planning, the daily outlook is the ground-stop product.** A ground stop on the day scores 0.31 the evening before and 0.32 at 05:00 on the day.
 - **Forecasts of convection on the routes** would carry information that these bounds, built on ORD alone, do not. Six hours out, though, their timing is as uncertain as ORD's.
+
+## Ground stops in a 3-hour window
+
+`hour_ground_stop_3h` asks whether a general ORD ground stop is in effect at some time in the 3 hours from the target hour: the target hour and the two after it. It is forecast at the hourly horizons. This is the event the previous section points to: a stop's hour is out of reach, but a block of hours leaves room for its timing.
+
+- **Features:** the hours spine's, plus 25 summaries of the window, each as known at `as_of` (`docs/features/`). Only this task reads them, so the other hourly models are unchanged.
+  - the TAF over its hours: thunder, IFR and snow hours, worst category, strongest gust, lowest ceiling and visibility, highest PROB;
+  - the station guidance over the window;
+  - GDPs and ground stops announced to cover any part of it;
+  - the departures and arrivals scheduled in it.
+- **Baselines:**
+  - the calendar climatology of the window event, which is the skill reference;
+  - the base rate;
+  - announced programs: a ground stop in effect, and announced to cover the window.
+- **Base rate:** a window has a stop in 5.2 % of the reported months' hours and 3.3–3.7 % in 2022–24, against 3.2 % and 2.0–2.1 % for a single hour.
+
+### The window's features were adopted on the development months
+
+The rule was fixed beforehand: adopt them if summed skill over the five horizons rises in both development windows.
+
+| Window (without → with) | 24 h | 6 h | 3 h | 1 h | 15 min | Summed | Calibration error |
+|---|---|---|---|---|---|---|---|
+| Sep 2018 – Feb 2020 | 0.071 → 0.080 | 0.090 → 0.105 | 0.102 → 0.129 | 0.144 → 0.160 | 0.270 → 0.290 | 0.677 → 0.764 | 0.0149 → 0.0129 |
+| Sep 2022 – Aug 2024 | 0.126 → 0.133 | 0.157 → 0.186 | 0.190 → 0.206 | 0.228 → 0.249 | 0.337 → 0.370 | 1.038 → 1.145 | 0.0028 → 0.0030 |
+
+They add skill at every horizon in both windows.
+
+### Results
+
+Run `outlook-window-2024-09-to-2026-08`: the reported months, in 7 minutes. Brier skill against the window's calendar climatology, with the 95 % interval:
+
+| Horizon | 3-hour window, GBDT | Without the window's features | Single hours (`hour_ground_stop`) | Calibration error |
+|---|---|---|---|---|
+| 24 h | 0.196 [0.151, 0.233] | 0.181 | 0.132 | 0.006 |
+| 6 h | 0.245 [0.189, 0.288] | 0.225 | 0.170 | 0.006 |
+| 3 h | 0.249 [0.195, 0.293] | 0.230 | 0.175 | 0.006 |
+| 1 h | 0.291 [0.235, 0.335] | 0.265 | 0.243 | 0.004 |
+| 15 min | 0.388 [0.339, 0.431] | 0.370 | 0.442 | 0.004 |
+
+**Findings:**
+
+- **The window gains 0.05–0.08 over single hours** from 24 h to 3 h ahead. At 15 min the hour wins, since by then it is mostly whether a stop is already in effect.
+- **6 h ahead the window scores 0.245,** near the 0.25 that single hours cannot reach, and the interval spans it.
+- **The window's features add 0.015–0.026 at every horizon.** Station guidance and the TAF carry most of the skill: without the guidance, 6 h falls to 0.218, and without the TAF to 0.228.
+- **The calibration error is at most 0.006,** and the model beats every baseline at every horizon, by 0.17–0.25.
+- **Alerts:** 6 h ahead, with each month's threshold set on its track record, the alert catches 76 % of the windows with a stop at 1.09 false alarms per 10 normal windows, and 28 % of its flags are right.
+- **By season and regime at 6 h:** spring 0.348, summer 0.231, autumn 0.158, winter 0.124; thunder days 0.345, and the FAA cap months 0.307.
+- **Quiet days lose a little,** as for single hours: −0.055 at 6 h on days with no program at all, and −0.12 at 24 h.
+
+**Caveats:**
+
+- **No v0.1 target was set for windows.** The 0.25 at 6 h was set for single hours. The window comes near it, but it is a different and easier event.
+- **The window starts at the target hour,** so a forecast 15 minutes ahead covers the next 3 hours and 15 minutes.
+- **Some variants score within noise of it.** At 6 h, `gbdt_shrunk` and the model without the program climate score 0.249 against the GBDT's 0.245. Neither was chosen for this task.
