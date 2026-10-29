@@ -36,7 +36,7 @@ Defined once in `ordfi.features.knowledge`, which also gives `visible(tables, as
 |---|---|
 | METAR (`weather_obs`), TAF (`taf_hourly`) | `known_time`: issued + 10 min |
 | Station guidance: GFS MOS (`gfs_mos`), NBM (`nbm`) | `known_time`: the run + 5 h, the cycle + 70 min (catalog cards `iem_mos`, `noaa_nbm`) |
-| ATC program versions (`atc_program_interval_version`) | the advisory's send time; a version's `valid_to` only once the next version is known |
+| ATC program versions (`atc_program_interval_version`) | the advisory's send time, with the cause it states; a version's `valid_to` only once the next version is known |
 | Flight schedule: times, carriers, route, block time | 7 days before scheduled departure (schedules are published months ahead) |
 | Tail number | 6 hours before scheduled departure |
 | Actual departure / arrival time and delay | when the departure / arrival happened |
@@ -52,7 +52,7 @@ Defined once in `ordfi.features.knowledge`, which also gives `visible(tables, as
 | `taf_` | departures, hours | Latest TAF covering the target's hour: lead time, flight category and the worst it allows, visibility, ceiling, wind, thunder and snow (prevailing, TEMPO or PROB), PROB percentage. Null beyond the TAF's 30 hours |
 | `taf_day_` | days | The latest TAF for each hour of the target day, summed up (details below). Null when no TAF reaches the day |
 | `mos_`, `nbm_` | hours, days | Station guidance for the target hour or day, from GFS MOS (2014-12 →) and NBM (2018-11 →), each 3-hourly projection from the latest run known (details below). Null beyond the guidance's 72 hours |
-| `atc_` | all | ORD's general GDP and ground stop: in effect now, minutes since the start and to the announced end, announced to cover the target (for days, any part of it, including programs that ended earlier that day), how many were issued in the last 24 hours, and the program climate: the local days among the last 7 and 30 with a GDP (ground stop) in effect (`atc_gdp_days_7d`, `atc_gdp_days_30d`, `atc_gs_days_7d`, `atc_gs_days_30d`) |
+| `atc_` | all | ORD's general GDP and ground stop: in effect now, minutes since the start and to the announced end, announced to cover the target (for days, any part of it, including programs that ended earlier that day), how many were issued in the last 24 hours, the program climate: the local days among the last 7 and 30 with a GDP (ground stop) in effect (`atc_gdp_days_7d`, `atc_gdp_days_30d`, `atc_gs_days_7d`, `atc_gs_days_30d`), and the days among them with either one whose advisories had cited staffing (`atc_staffing_days_7d`, `atc_staffing_days_30d`) |
 | `ops_` | all | ORD departures and arrivals that happened in the last one and three hours (count, mean delay, share 15+ min late), and departures scheduled in the last hour against those that left (`ops_dep_flow_1h`). For days also the last 24 hours (`ops_dep_24h_*`, `ops_arr_24h_*`): the previous day's state |
 | `dem_` | all | ORD departures and arrivals scheduled in the target's hour; for days, on the target day and in its busiest hour (`dem_peak_departures`, `dem_peak_arrivals`) |
 | `flt_` | departures | Operating and marketing carrier, destination, distance, scheduled block time |
@@ -96,11 +96,13 @@ Null means unknown or absent: no ceiling reported (unlimited), no gusts, no TAF 
   - the TAF regardless of its send time.
 - **The days spine** is checked on 60 worlds, every issue of each. It catches the day groups seeing past `as_of` (the TAF and the programs 6 hours ahead, the previous day 1 hour ahead) in 24 of 24 runs.
 - **The program climate** is checked on 60 worlds for both outlook spines. Counting programs that were not yet known, or their final versions, is caught in 8 of 8 runs.
+- **The program features alone** are also checked on 60 worlds of program versions only, at every issue of the days spine and at up to 12 forecast times of the hours spine. A leak through a later version shows only at a forecast between two versions, which full worlds rarely hold. Counting a program as staffing before its advisories cited it is caught in 8 of 8 runs (the full worlds alone catch it in 5 of 8 for hours and 6 of 8 for days), and the program-climate leak above in 8 of 8.
 - **Station guidance** is in every world too: random GFS MOS and NBM runs with their lags. The test catches the guidance seeing runs 6 hours ahead, and runs used at their run time instead of their known time, on both outlook spines in 20 of 20 runs.
 - **No leakage on real data.** The same check finds no mismatches:
   - 300 rows per spine in Jan 2016, Jul 2019 and Feb 2024 (1,800 rows);
   - every row of the days spine in those months and Nov 2025, a month with a clock change (605 rows);
-  - with the guidance, and again with the program climate, 300 hours and every day in Jul 2019, Feb 2024 and Nov 2025 (1,350 rows each time).
+  - with the guidance, and again with the program climate, 300 hours and every day in Jul 2019, Feb 2024 and Nov 2025 (1,350 rows each time);
+  - with the staffing cause, the same and Mar 2026 (1,805 rows, 797 of them with staffing days).
 - **Signal** (2015 – Aug 2026, 3.66 M departures per horizon, 23 % departing 15+ min late or cancelled):
 
 | At 1 h | Late or cancelled |

@@ -25,6 +25,10 @@ PROGRAM_COUNT_WINDOW = timedelta(hours=24)
 PROGRAM_CLIMATE_DAYS = (7, 30)
 PROGRAM_CLIMATE = [f"atc_{kind}_days_{days}d" for kind in ("gdp", "gs")
                    for days in PROGRAM_CLIMATE_DAYS]  # fmt: skip
+# The same days, counting only programs whose advisories had cited staffing ("STAFFING /
+# STAFFING", "STAFFING / VOLUME"): rare before 2025, common since.
+STAFFING_DAYS = [f"atc_staffing_days_{days}d" for days in PROGRAM_CLIMATE_DAYS]
+STAFFING_CAUSE = "STAFF"
 # A program version with no end stated (an open ground stop) is assumed to last this long.
 OPEN_PROGRAM = timedelta(hours=2)
 INBOUND_WINDOW = timedelta(hours=24)
@@ -283,19 +287,22 @@ def _guidance(keys: pl.DataFrame, frame: pl.DataFrame, prefix: str, instant: Ins
 
 
 def _versions(tables: Tables) -> pl.DataFrame:
-    """ORD's general program versions, with how long each stays current and its assumed end."""
+    """ORD's general program versions, with how long each stays current, its assumed end, and
+    whether its advisories up to this one cited staffing (a cause can change between them)."""
+    cites = pl.col("reason").str.to_uppercase().str.contains(STAFFING_CAUSE).fill_null(False)
     return tables.program_versions.filter(
         (pl.col("airport") == "ORD") & (pl.col("scope") == "general")
     ).with_columns(
         valid_until=pl.coalesce("valid_to", FAR_FUTURE),
         end_assumed=pl.coalesce("end_utc", pl.col("start_utc") + OPEN_PROGRAM),
+        staffing=cites.cum_max().over("program_id", order_by="version"),
     )
 
 
 def programs(spine: pl.DataFrame, tables: Tables) -> pl.DataFrame:
     """ORD's general GDPs and ground stops as known at as_of: in effect now (minutes since the
-    start, to the announced end), announced to cover the target, and how many were issued in
-    the last 24 hours."""
+    start, to the announced end), announced to cover the target, how many were issued in the
+    last 24 hours, and the days among the last 7 and 30 with one, and with one for staffing."""
     at_target = (pl.col("start_utc") <= pl.col("target_utc")) & (
         pl.col("target_utc") < pl.col("end_assumed")
     )
@@ -358,7 +365,7 @@ def _programs(spine: pl.DataFrame, tables: Tables, target: list[str], at_target:
         .join(_program_days(keys.select("as_of").unique(), versions), on="as_of", how="left")
     )
     flags = [c for c in features.columns if c.endswith(("_now", "_at_target"))]
-    counts = ["atc_gdp_issued_24h", "atc_gs_issued_24h", *PROGRAM_CLIMATE]
+    counts = ["atc_gdp_issued_24h", "atc_gs_issued_24h", *PROGRAM_CLIMATE, *STAFFING_DAYS]
     features = features.with_columns(
         *(pl.col(c).fill_null(False) for c in flags), *(pl.col(c).fill_null(0) for c in counts)
     )
@@ -367,9 +374,9 @@ def _programs(spine: pl.DataFrame, tables: Tables, target: list[str], at_target:
 
 def _program_days(keys: pl.DataFrame, versions: pl.DataFrame) -> pl.DataFrame:
     """The local days, among the last 7 and 30 before as_of, with a general GDP (ground stop)
-    in effect at some time, each program as known at as_of. Advisories are known as they are
-    sent, so these follow a change in how often programs are run (staffing, construction) days
-    after it starts, not months."""
+    in effect at some time, and with either one whose advisories had cited staffing, each
+    program as known at as_of. Advisories are known as they are sent, so these follow a change
+    in how often programs are run (staffing, construction) days after it starts, not months."""
     longest = timedelta(days=max(PROGRAM_CLIMATE_DAYS))
     known = (
         keys.with_columns(since=pl.col("as_of") - longest)
@@ -387,7 +394,7 @@ def _program_days(keys: pl.DataFrame, versions: pl.DataFrame) -> pl.DataFrame:
         end = pl.min_horizontal("end_assumed", "as_of") - timedelta(microseconds=1)
         in_window = known.filter(pl.col("end_assumed") > pl.col("as_of") - timedelta(days=days))
         touched = in_window.select(
-            "as_of", "program_type",
+            "as_of", "program_type", "staffing",
             day=pl.date_ranges(start.dt.convert_time_zone(LOCAL_TZ).dt.date(),
                                end.dt.convert_time_zone(LOCAL_TZ).dt.date()),
         ).explode("day")  # fmt: skip
@@ -396,6 +403,8 @@ def _program_days(keys: pl.DataFrame, versions: pl.DataFrame) -> pl.DataFrame:
             .alias(f"atc_gdp_days_{days}d"),
             pl.col("day").filter(pl.col("program_type") == "ground_stop").n_unique()
             .alias(f"atc_gs_days_{days}d"),
+            pl.col("day").filter(pl.col("staffing")).n_unique()
+            .alias(f"atc_staffing_days_{days}d"),
         )  # fmt: skip
         out = out.join(counted, on="as_of", how="left")
     return out

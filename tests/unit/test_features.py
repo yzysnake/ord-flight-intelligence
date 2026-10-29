@@ -219,3 +219,34 @@ def test_program_climate_counts_recent_days_as_known() -> None:
         (2, 2, 1),  # the 10th and the 14th; "old" is 41 days back; "late" not yet known
         (2, 2, 0),  # the ground stop is known only at 09:55
     ]
+
+
+def test_staffing_days_count_programs_that_had_cited_staffing_as_known() -> None:
+    def version(program: str, number: int, day: int, known: datetime, reason: str | None,
+                valid_to: datetime | None = None, kind: str = "gdp",
+                scope: str = "general") -> dict[str, object]:  # fmt: skip
+        return {"program_id": program, "airport": "ORD", "program_type": kind, "scope": scope,
+                "version": number, "start_utc": at(14, day=day), "end_utc": at(20, day=day),
+                "reason": reason, "known_time": known, "valid_to": valid_to}  # fmt: skip
+
+    staffing, weather, stop = "STAFFING / STAFFING", "WEATHER / THUNDERSTORMS", "ground_stop"
+    versions = [
+        # Issued for thunderstorms, extended for staffing: a staffing day once that is known.
+        version("w2s", 1, 10, at(13, day=10), weather, valid_to=at(16, day=10)),
+        version("w2s", 2, 10, at(16, day=10), staffing),
+        # Issued for staffing, revised for wind, then cancelled: it had cited staffing.
+        version("s2w", 1, 13, at(13, day=13), staffing, valid_to=at(15, day=13), kind=stop),
+        version("s2w", 2, 13, at(15, day=13), "WIND", valid_to=at(17, day=13), kind=stop),
+        version("s2w", 3, 13, at(17, day=13), None, kind=stop),
+        # Staffing is cited only at 13:00 on the 15th, after the first as_of.
+        version("later", 1, 14, at(13, day=14), weather, valid_to=at(13)),
+        version("later", 2, 14, at(13), staffing),
+        version("weather", 1, 12, at(13, day=12), weather),
+        version("carrier", 1, 11, at(13, day=11), staffing, kind=stop, scope="carrier"),
+    ]
+    rows = spine((at(12), at(18)), (at(14), at(18)))
+    got = build.features("hours", rows, tables(DAY, versions=versions))
+    assert pick(got, "atc_staffing_days_7d", "atc_staffing_days_30d", "atc_gdp_days_7d") == [
+        (2, 2, 3),  # the 10th and the 13th; the 14th was still a thunderstorm GDP
+        (3, 3, 3),
+    ]

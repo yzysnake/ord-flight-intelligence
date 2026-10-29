@@ -11,6 +11,7 @@ import polars as pl
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
+from ordfi.features import groups
 from ordfi.features.build import features, spine_for
 from ordfi.features.knowledge import Tables, visible
 from ordfi.features.spines import horizons
@@ -22,6 +23,13 @@ SPAN_MIN = 36 * 60  # every time falls in a 36-hour window, so events overlap
 minutes = st.integers(min_value=0, max_value=SPAN_MIN)
 categories = st.sampled_from(["VFR", "MVFR", "IFR", "LIFR"])
 maybe_bool = st.none() | st.booleans()
+causes = st.sampled_from([None, "WEATHER / WIND", "STAFFING / STAFFING"])
+# Program advisories are also sent close to the days spine's issues inside the world (19:00,
+# 07:00, 19:00 and 05:00 CDT), so that a forecast often falls between two versions.
+DAY_ISSUES = (0, 12 * 60, 24 * 60, 34 * 60)
+advisory_times = minutes | st.sampled_from(DAY_ISSUES).flatmap(
+    lambda m: st.integers(max(m - 60, 0), min(m + 60, SPAN_MIN))
+)
 
 
 def at(minute: int) -> datetime:
@@ -117,12 +125,14 @@ def guidance_runs(draw: st.DrawFn, lag_min: int, nbm: bool) -> list[dict[str, ob
 
 
 @st.composite
-def program_versions(draw: st.DrawFn) -> list[dict[str, object]]:
+def program_versions(
+    draw: st.DrawFn, min_programs: int = 0, max_programs: int = 4
+) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    for p in range(draw(st.integers(0, 4))):
+    for p in range(draw(st.integers(min_programs, max_programs))):
         kind = draw(st.sampled_from(["gdp", "ground_stop"]))
         scope = draw(st.sampled_from(["general", "general", "carrier"]))
-        known = sorted(draw(st.lists(minutes, min_size=1, max_size=3, unique=True)))
+        known = sorted(draw(st.lists(advisory_times, min_size=1, max_size=3, unique=True)))
         for v, k in enumerate(known):
             start = draw(minutes)
             end = draw(st.none() | st.integers(start, start + 600))
@@ -135,6 +145,7 @@ def program_versions(draw: st.DrawFn) -> list[dict[str, object]]:
                     "version": v + 1,
                     "start_utc": at(start),
                     "end_utc": None if end is None else at(end),
+                    "reason": draw(causes),
                     "known_time": at(k),
                     "valid_to": at(known[v + 1]) if v + 1 < len(known) else None,
                 }
@@ -189,14 +200,20 @@ def worlds(draw: st.DrawFn) -> Tables:
     )
 
 
-def check(spine_name: str, tables: Tables, picks: list[int]) -> None:
-    """Each picked spine row: features from the full tables == from the tables as known. For
-    days, every row: the world's second day at each issue, most of them inside the world."""
+def world_spine(spine_name: str, tables: Tables) -> pl.DataFrame:
+    """The spine's rows for the world: for days, the world's second day at each issue, most of
+    them inside the world."""
     if spine_name == "days":
         start, end = BASE + timedelta(days=1), BASE + timedelta(days=2)
     else:
         start, end = BASE, at(SPAN_MIN)
-    spine = spine_for(spine_name, tables, start, end, horizons(spine_name))
+    return spine_for(spine_name, tables, start, end, horizons(spine_name))
+
+
+def check(spine_name: str, tables: Tables, picks: list[int]) -> None:
+    """Each picked spine row (for days, every row): features from the full tables == from the
+    tables as known."""
+    spine = world_spine(spine_name, tables)
     if spine.is_empty():
         return
     full = features(spine_name, spine, tables)
@@ -206,6 +223,25 @@ def check(spine_name: str, tables: Tables, picks: list[int]) -> None:
         known = features(spine_name, row, visible(tables, row["as_of"].item()))
         expected = full.filter(pl.col("row") == r)
         assert known.drop("row").row(0, named=True) == expected.drop("row").row(0, named=True)
+
+
+PROGRAM_GROUPS = {"hours": groups.programs, "days": groups.day_programs}
+
+
+def check_programs(spine_name: str, tables: Tables, picks: list[int]) -> None:
+    """The program features alone, for every row at each picked as_of (for days, every
+    as_of): from the full tables == from the tables as known then."""
+    group = PROGRAM_GROUPS[spine_name]
+    spine = world_spine(spine_name, tables).with_row_index("row")
+    full = group(spine, tables)
+    times = spine["as_of"].unique().sort()
+    if spine_name == "hours":
+        times = times.gather([p % len(times) for p in picks]).unique()
+    for as_of in times:
+        rows = spine.filter(pl.col("as_of") == as_of)
+        known = group(rows, visible(tables, as_of)).sort("row")
+        expected = full.join(rows.select("row"), on="row", how="semi").sort("row")
+        assert known.rows(named=True) == expected.rows(named=True)
 
 
 picks = st.lists(st.integers(min_value=0, max_value=10_000), min_size=1, max_size=5)
@@ -231,3 +267,15 @@ def test_hour_features_use_only_what_was_known(tables: Tables, rows: list[int]) 
 @given(worlds(), picks)
 def test_day_features_use_only_what_was_known(tables: Tables, rows: list[int]) -> None:
     check("days", tables, rows)
+
+
+# Program histories in full worlds are small, and a leak through a later version (a cause that
+# changed, a revised end) shows only at a forecast between two versions. Worlds of versions
+# alone, checked at many forecast times, find those.
+@thorough
+@given(program_versions(1, 6), st.lists(st.integers(0, 10_000), max_size=12))
+def test_program_features_use_only_what_was_known(versions: list[dict[str, object]],
+                                                  times: list[int]) -> None:  # fmt: skip
+    tables = make_tables(BASE.date(), versions=versions)
+    check_programs("days", tables, times)
+    check_programs("hours", tables, times)

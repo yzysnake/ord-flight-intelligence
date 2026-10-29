@@ -1,7 +1,9 @@
 -- Each ORD program as known after each of its advisories (2001 →), for point-in-time use: the
 -- program as known at time t is its version with known_time <= t < valid_to (valid_to null: the
 -- latest). The last version of each program matches atc_program_interval. A cancellation that
--- came after the program had expired changes nothing and is left out.
+-- came after the program had expired changes nothing and is left out. Each version keeps the
+-- cause its own advisory states: a program's cause can change (a GDP for thunderstorms extended
+-- for staffing), and atc_program_interval keeps only the first.
 
 with chain as (
     select * from {{ ref('int_atc_program_chain') }}
@@ -48,6 +50,7 @@ select
     least(greatest(known_start, previous_end_utc), state_end_utc) as start_utc,
     state_end_utc as end_utc,
     kind = 'cancel' as is_cancelled,
+    reason,
     known_time,
     lead(known_time) over versions as valid_to,
     licence_class

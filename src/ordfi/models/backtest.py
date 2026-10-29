@@ -80,16 +80,21 @@ def _departure_models() -> list[Model]:
 
 # Features left out (by prefix), one ablation each: their value to the outlook (study §6.5).
 CLIMATE = ("atc_gdp_days_", "atc_gs_days_")
+STAFFING = ("atc_staffing_days_",)
 ABLATIONS = {
     "taf": ("taf_",), "guidance": ("mos_", "nbm_"), "atc": ("atc_",), "climate": CLIMATE,
-    "ops": ("ops_",),
+    "staffing": STAFFING, "ops": ("ops_",),
 }  # fmt: skip
+# The program climate did not help the delay events on the development months; the staffing
+# cause was tried only for the GDP and ground-stop events.
+PROGRAMS_ONLY = (*CLIMATE, *STAFFING)
 
 
 def _outlook_models(spine: str, *baseline: Model, without: tuple[str, ...] = ()) -> list[Model]:
     """The baselines, then the Outlook GBDT on the spine's features less ``without``: on the
     schedule alone (calendar and demand), on every feature, and without each of the TAF, the
-    station guidance, the FAA programs, the recent program climate and the operations."""
+    station guidance, the FAA programs, the recent program climate, the staffing cause and the
+    operations."""
     ablations = [gbdt.outlook(f"gbdt_no_{name}", spine=spine, without=(*without, *left_out))
                  for name, left_out in ABLATIONS.items()
                  if not set(left_out) <= set(without)]  # fmt: skip
@@ -117,8 +122,7 @@ TASKS = {
         Task("dep_cancelled", "departures", pl.col("y_cancelled"), _departure_models,
              description="An ORD departure is cancelled (T5)"),
         Task("hour_bad60", "hours", pl.col("y_late60_share") >= BAD_HOUR_SHARE,
-             # The program climate did not help the delay events on the development months.
-             lambda: _hour_models(baselines.persistence(), without=CLIMATE),
+             lambda: _hour_models(baselines.persistence(), without=PROGRAMS_ONLY),
              rows=pl.col("y_n_departures") >= BAD_HOUR_MIN_DEPARTURES,
              description="20 %+ of an hour's ORD departures leave 60+ min late or are cancelled "
                          "(hours with 10+ departures; T1)", track_record=True),
@@ -131,7 +135,7 @@ TASKS = {
              description="A general ORD ground stop is in effect during the hour (T1)",
              track_record=True),
         Task("day_bad60", "days", pl.col("y_late60_share") >= BAD_DAY_SHARE,
-             lambda: _day_models(baselines.day_persistence(), without=CLIMATE),
+             lambda: _day_models(baselines.day_persistence(), without=PROGRAMS_ONLY),
              rows=pl.col("y_n_departures") >= BAD_DAY_MIN_DEPARTURES,
              description="A bad day: 20 %+ of a local day's ORD departures leave 60+ min late or "
                          "are cancelled (T1)", track_record=True),

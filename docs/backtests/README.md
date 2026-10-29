@@ -104,7 +104,7 @@ Run `baselines-2024-09-to-2026-08`: 24 test months, Sep 2024 – Aug 2026, in 3.
 
 `ordfi.models.gbdt`: one LightGBM classifier per task and horizon, refit for every test month (study §6.4). It runs on the three hourly tasks (T1); the daily outlook below uses the same model on the days spine.
 
-> **Since the station guidance was added, `gbdt` also reads GFS MOS and NBM (86 hourly and 94 daily features). The GDP and ground-stop models have since added the program climate (90 and 98).** The results in this section and the next two are for the model before the guidance, which the run `outlook-guidance-…` scores as `gbdt_no_guidance`. The current model's results are under *Station guidance* and *Calibration of GDP and ground-stop days* below.
+> **Since the station guidance was added, `gbdt` also reads GFS MOS and NBM (86 hourly and 94 daily features). The GDP and ground-stop models have since added the program climate and the staffing cause (92 and 100).** The results in this section and the next two are for the model before the guidance, which the run `outlook-guidance-…` scores as `gbdt_no_guidance`. The current model's results are under *Station guidance* and *Calibration of GDP and ground-stop days* below.
 
 - **Inputs:** all 59 features of the hours spine (`docs/features/`), as known at `as_of`. Booleans become 0/1 and flight categories their rank (LIFR lowest); missing values stay missing.
 - **Number of trees:** the last 12 training months are held out, after a one-day embargo. Early stopping on their log loss picks the number of trees (at most 2,000, patience 100), and the trees are then refit on the whole training window.
@@ -523,5 +523,68 @@ Run `outlook-climate-2024-09-to-2026-08`: the four GDP and ground-stop tasks on 
 - **Daily GDP and ground-stop calibration is still above the target.** The weather cannot forecast a staffing program, and before 2025 the models had almost none to learn from.
 - **The training windows will catch up.** Models fitted from November 2026 on learn from the 38 staffing programs of January 2025 – August 2026. Whether that is enough is for the monitoring to show.
 - **The next candidates,** each to be chosen on both development windows:
-  - the advisories' stated cause as a feature, such as the days among the last 7 and 30 with a staffing program;
+  - the advisories' stated cause as a feature, such as the days among the last 7 and 30 with a staffing program (tried next, below);
   - a shift that waits for evidence, such as one shrunk by the record's size or triggered by a run of misses.
+
+### The staffing cause
+
+The first candidate: `atc_staffing_days_7d` and `atc_staffing_days_30d`, the days among the last 7 and 30 with a GDP or ground stop whose advisories had cited staffing, as known at `as_of` (`docs/features/`).
+
+- **A program's cause can change between its advisories.** Of the 59 ORD programs that cited staffing (2023–26), 10 were first issued for weather or another cause and extended for staffing.
+- So each program version keeps the cause its own advisory states, and a program counts from the first advisory that cited staffing.
+- Only the GDP and ground-stop models read them: 92 hourly and 100 daily features.
+
+**The development windows cannot test it.**
+
+- They hold three staffing programs, all in Aug–Sep 2023, and none at all in 2018–20.
+- So the rule fixed beforehand was that it must do no harm there. It is adopted unless, in either window, summed skill over the 20 task-horizons falls by more than 0.01 or the mean calibration error rises by more than 0.0005.
+- The reported months were then its first real test, with no other variant tried on them.
+
+| Window | Change in summed skill | Change in calibration error |
+|---|---|---|
+| Sep 2018 – Feb 2020 | 0 (identical: the counts are all zero) | 0 |
+| Sep 2022 – Aug 2024 | −0.007 (hourly models only) | −0.00001 |
+
+It passed and was adopted. In both windows `gbdt_no_staffing` reproduces the program-climate model exactly.
+
+#### Results
+
+Run `outlook-staffing-2024-09-to-2026-08`: the four GDP and ground-stop tasks on the same 24 test months, in 15 minutes. `gbdt_no_staffing` reproduces the climate run's GBDT exactly.
+
+| Task (base rate) | Horizon | With the staffing cause | Without | Gain | Calibration error (with / without) | Mean forecast (with / without) |
+|---|---|---|---|---|---|---|
+| `hour_gdp` (3.9 %) | 24 h | 0.187 [0.116, 0.244] | 0.186 | +0.002 | 0.008 / 0.008 | 3.1 % / 3.1 % |
+| | 6 h | 0.317 [0.228, 0.378] | 0.324 | −0.007 | 0.005 / 0.005 | 3.5 % / 3.5 % |
+| `hour_ground_stop` (3.2 %) | 24 h | 0.132 [0.091, 0.165] | 0.132 | +0.000 | 0.004 / 0.005 | 2.8 % / 2.7 % |
+| | 6 h | 0.170 [0.132, 0.212] | 0.167 | +0.003 | 0.004 / 0.004 | 2.8 % / 2.8 % |
+| `day_gdp` (14.4 %) | `d3_1900` | 0.157 [0.109, 0.204] | 0.158 | −0.002 | 0.048 / 0.048 | 9.6 % / 9.6 % |
+| | `d2_1900` | 0.222 [0.156, 0.279] | 0.227 | −0.005 | 0.046 / 0.047 | 9.7 % / 9.7 % |
+| | `d1_0700` | 0.238 [0.177, 0.293] | 0.235 | +0.003 | 0.053 / 0.050 | 9.4 % / 9.4 % |
+| | `d1_1900` | 0.274 [0.203, 0.335] | 0.276 | −0.002 | 0.048 / 0.049 | 9.7 % / 9.6 % |
+| | `d0_0500` | 0.306 [0.231, 0.371] | 0.310 | −0.004 | 0.055 / 0.054 | 9.4 % / 9.5 % |
+| `day_ground_stop` (18.8 %) | `d3_1900` | 0.167 [0.112, 0.228] | 0.172 | −0.005 | 0.037 / 0.037 | 15.7 % / 15.5 % |
+| | `d2_1900` | 0.209 [0.154, 0.273] | 0.211 | −0.002 | 0.046 / 0.043 | 15.5 % / 15.3 % |
+| | `d1_0700` | 0.244 [0.184, 0.301] | 0.245 | −0.001 | 0.038 / 0.039 | 15.3 % / 15.4 % |
+| | `d1_1900` | 0.311 [0.246, 0.377] | 0.307 | +0.005 | 0.041 / 0.050 | 15.9 % / 15.7 % |
+| | `d0_0500` | 0.324 [0.254, 0.390] | 0.329 | −0.005 | 0.044 / 0.041 | 15.8 % / 15.8 % |
+
+**Findings:**
+
+- **It did not help.**
+  - Over the 20 task-horizons, summed skill is 6.209 against 6.235 without it, and the mean calibration error 0.0246 against 0.0248.
+  - Every change is within the intervals, and the forecasts' level does not move.
+- **The daily models could not use it until March 2026.**
+  - A split needs 200 training days on each side. The training windows held fewer days after a staffing program until they reached December 2025: 66 in 2023, then 2025's as they entered.
+  - So through February 2026 the daily forecasts are identical with and without it. The hourly models, with 24 rows a day, could use it from the start.
+  - Over January – August 2026, the Brier score is 0.3–0.6 % worse with it on each of the four tasks.
+- **Staffing days are still missed.**
+  - The evening before, the 41 days with a staffing program had a GDP on 88 % of them. They were forecast at 27 % on average, with the feature and without it.
+  - At 24 h, their hours had a GDP 28 % of the time and were forecast at 9 %.
+- **Alerts do not change:** catches move by −1.0 to +1.5 points, false alarms by at most 0.06 per 10.
+
+**Caveats:**
+
+- **It stays by the rule, not by the result.** It did no harm where it could be tested and no good where it could.
+- **The training windows are filling.** The 47 staffing programs of January 2025 – August 2026 enter the models fitted from November 2026. The monitoring should check the feature then, against fresh months.
+- **The counts look back.** Staffing programs come in spells, but how many recent days had one says little about which day is next. A signal from other airports' advisories, where staffing programs may show first, would need a crawl beyond ORD's.
+- **The next candidate** is the shift that waits for evidence, listed above.
