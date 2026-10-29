@@ -128,5 +128,5 @@ For days (4,261 days): 11.1 % are bad days (20 %+ of departures 60+ min late or 
 ## Caveats
 
 - **Tails are post-hoc.** BTS records the aircraft that actually flew, so aircraft swaps leak into the inbound features. Flights whose inbound is not found are late twice as often (44 % vs 21 %), partly because swaps and inbound cancellations remove the original inbound. Measure the inbound features' value with an ablation (with and without them; research study §6.5).
-- **BTS gives no tail for 30 % of cancelled flights, and only for cancelled ones.** Their inbound features are null, which would reveal the cancellation. They are marked `y_no_tail`; leave them out when training with inbound features, and keep them for cancellation models without inbound features.
+- **BTS gives no tail for 29 % of cancelled flights, and only for cancelled ones.** Their inbound features are null, which would reveal the cancellation. They are marked `y_no_tail`; leave them out when training with inbound features, and keep them for cancellation models without inbound features. The backtest's delay tasks keep only the flights with a tail, and its cancellation task reads no inbound features (`docs/backtests/`).
 - **In-day operations** (`ops_`, `inb_`) assume a departure or arrival was known when it happened (study §7.5). The live archive will measure the real reporting lag.

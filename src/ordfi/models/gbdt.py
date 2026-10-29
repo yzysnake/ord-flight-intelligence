@@ -1,4 +1,5 @@
-"""Gradient-boosted trees on the as-of features: the Outlook model (research study §6.4).
+"""Gradient-boosted trees on the as-of features: the Outlook and departure models (research
+study §6.4).
 
 A LightGBM classifier of one event at one horizon, fitted per fold by the backtest harness.
 The last ``validation_months`` of the training window, after a one-day embargo, choose the
