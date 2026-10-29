@@ -665,3 +665,44 @@ Run `outlook-shift-2024-09-to-2026-08`: the four GDP and ground-stop tasks with 
   - Adopting it now would mean choosing on the test months. Its honest test would then be the months after August 2026.
 - **The record ends the month before** because the advisories give the GDP and ground-stop outcomes by the next day. The bad-delay events wait for BTS, so the shift would lag two months more for them.
 - **The alerts could use the same shorter record** for the GDP and ground-stop tasks. That is untested, and would have to be chosen on the development months like the 12-month record was.
+
+## Ground-stop hours at 6 h: how far skill can go
+
+The v0.1 target is Brier skill above 0.25 at 6 h. Ground-stop hours score 0.170 there in the reported months (0.132 on the development months). They barely improve by 3 h (0.175), and even 1 h ahead score only 0.243. This section asks how far skill can go.
+
+### Ground stops are short and sudden
+
+- **Short:** 1,137 general ORD ground stops since 2015, with a median length of 1.25 hours; 90 % are over within 3.
+- **Sudden:** 95 % were issued after the time they start, taking effect at once.
+- **Mostly storms:** thunderstorms cause 66 % of the ground-stop hours, and 78 % of thunderstorm stops fall in May – September. Snow and ice cause 12 % and wind 5 %.
+
+### What perfect knowledge would score
+
+Each of these forecasts knows something for certain, with rates by month (and by local hour, for the day) fitted on 2015–2022. They are scored like the GBDT, against the calendar climatology:
+
+| Known for certain | Sep 2022 – Aug 2024 | Sep 2024 – Aug 2026 |
+|---|---|---|
+| Nothing: the GBDT, 6 h ahead | 0.132 | 0.170 |
+| Thunder at ORD in the target hour | 0.126 | 0.113 |
+| Thunder at ORD within 1 h of it | 0.181 | 0.159 |
+| Thunder at ORD within 2 h of it | 0.180 | 0.145 |
+| A ground stop that local day | 0.197 | 0.164 |
+| The day, and thunder at ORD within 1 h | 0.311 | 0.248 |
+
+- **Most stops are not storms overhead.** Only 24 % of ground-stop hours had thunder at ORD in the hour, and 39 % within an hour of it. The rest answer storms on the arrival and departure routes, or come before and after them at the field.
+- **Knowing the day still leaves the hour to guess:** at most 0.20.
+- **The GBDT comes close to any single piece of perfect knowledge.** It is within 0.07 of them on the development months, and above them all in the reported months.
+- **Only knowing both the day and the storms' hour reaches 0.25** (0.31 and 0.248). That is foresight no forecast has 6 hours out.
+
+### Two probes
+
+One fit per development window, trained to three months before it, with the GBDT's features:
+
+- **Timing-tolerant thunder forecasts** add +0.008 (2018–20) and +0.004 (2022–24). These are the TAF's thunder within 2 h of the target, NBM's 3-hour thunder maximum within 3 h, and GFS MOS's 6-hour maximum within 6 h.
+- **A wider event helps a little.** A ground stop at some time in the 3 hours from the target, 6 h ahead, scores 0.11–0.14; in the 6 hours from it, 0.13–0.17. The hour itself scores 0.09–0.10 in the same probe.
+
+**What this means:**
+
+- **0.25 at 6 h is out of reach for single hours.** It asks for about the skill of perfect knowledge of both the day and the storms' hour.
+- **For planning, the daily outlook is the ground-stop product.** A ground stop on the day scores 0.31 the evening before and 0.32 at 05:00 on the day.
+- **Forecasts of convection on the routes** would carry information that these bounds, built on ORD alone, do not. Six hours out, though, their timing is as uncertain as ORD's.

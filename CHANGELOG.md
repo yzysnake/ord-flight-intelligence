@@ -7,6 +7,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- How far ground-stop hours can go 6 h ahead (`docs/backtests/`), against the v0.1 target of 0.25 (they score 0.170).
+  - Ground stops last 1.25 h (median), 95 % take effect at once, and two thirds of their hours are thunderstorm stops. Only 24 % of ground-stop hours had thunder at ORD in the hour.
+  - Forecasts that knew the ground-stop day, or ORD's thunder within an hour, for certain would score at most 0.20. Only both at once reach 0.25 (0.31 and 0.248).
+  - Probes: timing-tolerant thunder forecasts add 0.004–0.008, and a stop within the next 3 or 6 hours scores 0.11–0.17.
 - Shifts that wait for evidence (`ordfi.models.recent`).
   - `shift_error` gives the track-record shift a standard error that counts each day once. The recalibration kinds `shrunk` (scaled by τ² / (τ² + se²)) and `tested` (only past two standard errors) use it.
   - The GDP and ground-stop backtests score `gbdt_shrunk`: the shift to the level of the last 6 months, ending the month before (the advisories give those outcomes by the next day), shrunk with τ 0.25.
