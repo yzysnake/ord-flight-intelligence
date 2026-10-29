@@ -90,6 +90,7 @@ Daily, Brier skill on the same months (730 days):
   - The FAA cap regime is untrained.
   - Daily GDP and ground-stop forecasts run low when programs become more frequent. In the reported months they averaged 9.6 % for GDP days (14.4 % observed) and 15.6 % for ground-stop days (18.8 %), with calibration errors of 0.037–0.055.
   - About half of the shortfall is days with staffing programs, which the training years barely had. The staffing cause did not lift them: those days were forecast at 27 % the evening before, and 88 % of them had a GDP.
+  - A shift of the level that waits for evidence (`gbdt_shrunk`) would have brought the daily calibration error to 0.029 in the reported months, with more skill. It lost skill on 2022–24, though, and was not adopted (`docs/backtests/`).
   - The alert thresholds lag a rising trend: false alarms ran up to 1.6 per 10 normal days in the reported months.
 
 ## 6. Monitoring

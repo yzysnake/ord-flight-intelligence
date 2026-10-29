@@ -587,4 +587,81 @@ Run `outlook-staffing-2024-09-to-2026-08`: the four GDP and ground-stop tasks on
 - **It stays by the rule, not by the result.** It did no harm where it could be tested and no good where it could.
 - **The training windows are filling.** The 47 staffing programs of January 2025 – August 2026 enter the models fitted from November 2026. The monitoring should check the feature then, against fresh months.
 - **The counts look back.** Staffing programs come in spells, but how many recent days had one says little about which day is next. A signal from other airports' advisories, where staffing programs may show first, would need a crawl beyond ORD's.
-- **The next candidate** is the shift that waits for evidence, listed above.
+- **The next candidate** is the shift that waits for evidence, tried next.
+
+### A shift that waits for evidence
+
+The last candidate moves the forecasts' level only as far as the track record's evidence supports.
+
+- **The record:** for each test month and horizon, the GBDT's forecasts and outcomes over the last 3, 6 or 12 months, ending the month before. The GDP and ground-stop outcomes come from the advisories, which are known by the next day.
+- **The estimate:** the record's logit shift, as for `gbdt_recent`. Its standard error counts each day once, since a day's hours share its weather and programs (`recent.shift_error`).
+- **Two ways to wait:**
+  - **shrunk:** the shift times τ² / (τ² + se²), where τ, the spread expected of the true shift, is 0.25 or 0.5;
+  - **tested:** the whole shift, but only once it is two standard errors from none.
+
+The rule was fixed before the runs and applied per spine: the daily and the hourly GDP and ground-stop task-horizons, 10 each. A variant passes if, in both development windows, the mean calibration error falls and summed skill does not. Among those that pass, the one with the best skill gain in its worse window is adopted.
+
+Change in summed skill against the GBDT, with the full shift (as `gbdt_recent`, but on records ending the month before) for reference:
+
+| Variant | Daily, 2018–20 | Daily, 2022–24 | Hourly, 2018–20 | Hourly, 2022–24 |
+|---|---|---|---|---|
+| Full shift, 3 months | +0.121 | −0.467 | +0.061 | −0.168 |
+| Full shift, 6 months | +0.070 | −0.151 | +0.004 | −0.111 |
+| Full shift, 12 months | −0.157 | −0.178 | −0.103 | −0.073 |
+| Shrunk τ 0.25, 3 months | +0.169 | −0.080 | +0.102 | −0.030 |
+| **Shrunk τ 0.25, 6 months** | **+0.121** | **−0.040** | +0.043 | −0.036 |
+| Shrunk τ 0.25, 12 months | −0.079 | −0.082 | −0.075 | −0.045 |
+| Shrunk τ 0.5, 3 months | +0.199 | −0.219 | +0.096 | −0.081 |
+| Shrunk τ 0.5, 6 months | +0.104 | −0.094 | +0.021 | −0.075 |
+| Shrunk τ 0.5, 12 months | −0.129 | −0.139 | −0.095 | −0.063 |
+| Tested, 3 months | +0.083 | −0.166 | +0.036 | −0.063 |
+| Tested, 6 months | +0.043 | −0.112 | +0.024 | −0.086 |
+| Tested, 12 months | −0.150 | −0.084 | −0.078 | −0.015 |
+
+- **No variant passed.** Every one lost skill in 2022–24, on both spines.
+- **Waiting for evidence cuts the losses.** In 2022–24, the full shift on 3 months lost 0.467 for the daily tasks, against 0.040 for the shrunk shift on 6 months (τ 0.25). Twelve-month records lost in both windows.
+- **The best daily variant also raised the daily calibration error in 2022–24,** if barely (+0.0002). In 2018–20 it lowered it by 0.0013.
+- **The loss is structural.** Tried afterwards, and not part of the decision: with τ as small as 0.05, the shift still loses in 2022–24 (−0.001 to −0.003). In those months the record's level errors did not carry into the next month.
+- **Rejected,** by the rule fixed beforehand. `gbdt_shrunk`, the shrunk shift on 6 months with τ 0.25 (the best worse-window gain for the daily tasks), is still scored for the GDP and ground-stop tasks, as `gbdt_recent` is.
+
+#### The reported months, for information
+
+Run `outlook-shift-2024-09-to-2026-08`: the four GDP and ground-stop tasks with `gbdt_shrunk` scored, in 14 minutes. Its other models reproduce the staffing run's exactly. This is not a basis for adopting the shift: it was rejected before these months were looked at.
+
+| Task (base rate) | Horizon | GBDT | `gbdt_shrunk` | Calibration error (GBDT / shrunk) | Mean forecast (GBDT / shrunk) |
+|---|---|---|---|---|---|
+| `hour_gdp` (3.9 %) | 24 h | 0.187 | 0.190 | 0.008 / 0.004 | 3.1 % / 3.7 % |
+| | 6 h | 0.317 | 0.318 | 0.005 / 0.002 | 3.5 % / 4.0 % |
+| `hour_ground_stop` (3.2 %) | 24 h | 0.132 | 0.140 | 0.004 / 0.001 | 2.8 % / 3.2 % |
+| | 6 h | 0.170 | 0.174 | 0.004 / 0.002 | 2.8 % / 3.2 % |
+| `day_gdp` (14.4 %) | `d3_1900` | 0.157 | 0.180 | 0.048 / 0.031 | 9.6 % / 12.5 % |
+| | `d2_1900` | 0.222 | 0.252 | 0.046 / 0.024 | 9.7 % / 12.4 % |
+| | `d1_0700` | 0.238 | 0.270 | 0.053 / 0.028 | 9.4 % / 12.1 % |
+| | `d1_1900` | 0.274 | 0.302 | 0.048 / 0.023 | 9.7 % / 12.2 % |
+| | `d0_0500` | 0.306 | 0.339 | 0.055 / 0.033 | 9.4 % / 11.9 % |
+| `day_ground_stop` (18.8 %) | `d3_1900` | 0.167 | 0.173 | 0.037 / 0.023 | 15.7 % / 17.4 % |
+| | `d2_1900` | 0.209 | 0.225 | 0.046 / 0.032 | 15.5 % / 17.1 % |
+| | `d1_0700` | 0.244 | 0.261 | 0.038 / 0.036 | 15.3 % / 17.0 % |
+| | `d1_1900` | 0.311 | 0.321 | 0.041 / 0.029 | 15.9 % / 17.4 % |
+| | `d0_0500` | 0.324 | 0.334 | 0.044 / 0.027 | 15.8 % / 17.2 % |
+
+- **Here it would have helped.**
+  - Summed daily skill is 2.658 against the GBDT's 2.453.
+  - The mean daily calibration error is 0.029 against 0.046, within the 0.03 target. GDP days are forecast at 12.2 % on average against 14.4 % observed (9.6 % without the shift).
+  - Hourly, skill is unchanged (3.772 against 3.756) and the calibration error halves.
+  - Unlike `gbdt_recent`, it does not lose skill.
+- **The gain is GDP days'.**
+  - Against the GBDT's forecasts, its Brier skill for GDP days is +0.028 to +0.047, with the 95 % interval above zero at four of the five issues.
+  - For ground-stop days it is +0.007 to +0.022, and for hours −0.001 to +0.010, all intervals spanning zero.
+- **It follows the level late and overshoots after a spell.**
+  - The evening before, October and November 2025 were still forecast at 4 % and 10 % for GDP days, against 23 % and 30 %.
+  - December 2025 to February 2026 were forecast at 9–16 %, against 0–10 %.
+- **Alerts do not change.** They are set on the GBDT's own forecasts.
+
+**Caveats:**
+
+- **The three periods disagree.** The shift gained in 2018–20 and in the reported months, when programs were rising, and lost a little in 2022–24, when they were not.
+  - Adopting it would trade small losses in calm years for larger gains when the level drifts. The rule fixed beforehand did not accept that trade.
+  - Adopting it now would mean choosing on the test months. Its honest test would then be the months after August 2026.
+- **The record ends the month before** because the advisories give the GDP and ground-stop outcomes by the next day. The bad-delay events wait for BTS, so the shift would lag two months more for them.
+- **The alerts could use the same shorter record** for the GDP and ground-stop tasks. That is untested, and would have to be chosen on the development months like the 12-month record was.
