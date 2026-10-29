@@ -55,6 +55,12 @@ BAD_DAY_MIN_DEPARTURES = 100
 # month with published outcomes (chosen on the development months: docs/backtests/).
 TRACK_RECORD = 12
 RECALIBRATED = ("gbdt",)  # models also scored recalibrated on their track record
+# Scored, not adopted (docs/backtests/): for events whose outcomes the advisories give by the
+# next day, the shift to the level of the last 6 months, ending the month before, shrunk toward
+# none by its uncertainty (``recent.recalibration``, "shrunk"): gbdt_shrunk.
+SHRUNK_RECORD, SHRUNK_LAG, SHRUNK_PRIOR_SD = 6, 1, 0.25
+SHRUNK_SUFFIX = "_shrunk"
+assert SHRUNK_RECORD + SHRUNK_LAG <= TRACK_RECORD + LABEL_LAG + 1  # within the warm-up
 
 
 @dataclass(frozen=True)
@@ -67,6 +73,7 @@ class Task:
     description: str = ""
     track_record: bool = False  # alerts and recalibration from each month's track record
     label_lag: int = LABEL_LAG  # months between the last training month and the test month
+    advisory_outcomes: bool = False  # outcomes known from the FAA advisories by the next day
 
 
 def _late(minutes: int) -> pl.Expr:
@@ -129,11 +136,11 @@ TASKS = {
         Task("hour_gdp", "hours", pl.col("y_gdp"),
              lambda: _hour_models(baselines.announced("gdp")),
              description="A general ORD GDP is in effect during the hour (T1)",
-             track_record=True),
+             track_record=True, advisory_outcomes=True),
         Task("hour_ground_stop", "hours", pl.col("y_ground_stop"),
              lambda: _hour_models(baselines.announced("gs")),
              description="A general ORD ground stop is in effect during the hour (T1)",
-             track_record=True),
+             track_record=True, advisory_outcomes=True),
         Task("day_bad60", "days", pl.col("y_late60_share") >= BAD_DAY_SHARE,
              lambda: _day_models(baselines.day_persistence(), without=PROGRAMS_ONLY),
              rows=pl.col("y_n_departures") >= BAD_DAY_MIN_DEPARTURES,
@@ -142,11 +149,11 @@ TASKS = {
         Task("day_gdp", "days", pl.col("y_gdp"),
              lambda: _day_models(baselines.announced("gdp")),
              description="A general ORD GDP is in effect at some time in the local day (T1)",
-             track_record=True),
+             track_record=True, advisory_outcomes=True),
         Task("day_ground_stop", "days", pl.col("y_ground_stop"),
              lambda: _day_models(baselines.announced("gs")),
              description="A general ORD ground stop is in effect at some time in the local day "
-                         "(T1)", track_record=True),
+                         "(T1)", track_record=True, advisory_outcomes=True),
     )
 }  # fmt: skip
 
@@ -345,9 +352,14 @@ def run(task_name: str, horizons: list[str], test_months: list[date], root: Path
     predictions = predict(task, horizons, record + test_months, root, chosen, workers)
     if task.track_record:
         names = [m.name for m in chosen if m.name in RECALIBRATED]
-        recalibrated = recent.recalibrate(predictions, names, test_months, TRACK_RECORD,
-                                          record_lag)  # fmt: skip
-        predictions = pl.concat([predictions, recalibrated])
+        recalibrated = [recent.recalibrate(predictions, names, test_months, TRACK_RECORD,
+                                           record_lag)]  # fmt: skip
+        if task.advisory_outcomes:
+            recalibrated.append(recent.recalibrate(
+                predictions, names, test_months, SHRUNK_RECORD, SHRUNK_LAG, "shrunk",
+                suffix=SHRUNK_SUFFIX, prior_sd=SHRUNK_PRIOR_SD,
+            ))  # fmt: skip
+        predictions = pl.concat([predictions, *recalibrated])
     scored = predictions.filter(pl.col("test_month").is_in(test_months))
     metrics, bins = evaluate(scored, day_flags(root / "core"), _key(task))
     name = run_name or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -357,7 +369,7 @@ def run(task_name: str, horizons: list[str], test_months: list[date], root: Path
     metrics.write_parquet(out / "metrics.parquet")
     bins.write_parquet(out / "reliability.parquet")
     if task.track_record:
-        own = predictions.filter(~pl.col("model").str.ends_with(recent.SUFFIX))
+        own = predictions.filter(pl.col("model").is_in([m.name for m in chosen]))
         recent.alerts(own, test_months, TRACK_RECORD, record_lag).write_parquet(
             out / "alerts.parquet"
         )
@@ -366,6 +378,8 @@ def run(task_name: str, horizons: list[str], test_months: list[date], root: Path
         "horizons": horizons, "test_months": [m.isoformat() for m in test_months],
         "track_record_months": [m.isoformat() for m in record],
         "label_lag_months": task.label_lag,
+        **({"shrunk_shift": {"record_months": SHRUNK_RECORD, "lag_months": SHRUNK_LAG,
+                             "prior_sd": SHRUNK_PRIOR_SD}} if task.advisory_outcomes else {}),
         "excluded_from_training": {"from": f"{EXCLUDED[0]:%Y-%m}", "to": f"{EXCLUDED[1]:%Y-%m}"},
         "reference": REFERENCE, "models": sorted(predictions["model"].unique().to_list()),
         "git_commit": _git_commit(), "seconds": round(time.monotonic() - began, 1),

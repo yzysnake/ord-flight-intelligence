@@ -6,7 +6,9 @@ the last ``record`` months whose outcomes are known, ending ``lag`` months befor
 out-of-sample forecasts, made by the models of the time. Two things are reset on it each month:
 
 - the forecasts' level (``recalibrate``): a logistic shift (or a Platt map) fitted to the track
-  record, so the probabilities follow drifts in how often events happen;
+  record, so the probabilities follow drifts in how often events happen. The shift can wait for
+  evidence: shrunk toward none by how uncertain it is (``shrunk``), or made only when it
+  clearly differs from none (``tested``), its uncertainty counting each day once;
 - the alert threshold (``alerts``): the lowest forecast that would have flagged at most
   ``false_alarms`` of the track record's non-events.
 
@@ -17,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from datetime import date
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -27,6 +30,10 @@ from ordfi.models.metrics import EPS, FALSE_ALARMS, calibration, logit
 
 Floats = NDArray[np.float64]
 SUFFIX = "_recent"  # recalibrated forecasts are scored as another model, e.g. gbdt_recent
+# The shifts that wait for evidence: the spread expected of the true shift (logit), and how
+# many standard errors a shift must clear.
+PRIOR_SD = 0.5
+EVIDENCE_Z = 2.0
 ALERTS = {
     "model": pl.String(), "horizon": pl.String(), "months": pl.Int64(), "rows": pl.Int64(),
     "events": pl.Int64(), "flags": pl.Int64(), "hit_rate": pl.Float64(),
@@ -69,12 +76,34 @@ def shift(y: Floats, p: Floats) -> float:
     return b
 
 
-def recalibration(kind: str, y: Floats, p: Floats) -> Callable[[Floats], Floats]:
-    """A map from forecasts to recalibrated ones, fitted on a track record."""
+def shift_error(y: Floats, p: Floats, days: NDArray[Any]) -> tuple[float, float]:
+    """The shift (``shift``) and its standard error, with each day's outcomes taken together:
+    a day's hours share its weather and programs, so they are not separate evidence."""
+    b = shift(y, p)
+    q = 1 / (1 + np.exp(-(logit(p) + b)))
+    _, day = np.unique(days, return_inverse=True)
+    score = np.bincount(day, weights=y - q)
+    return b, float(np.sqrt((score**2).sum())) / max(float((q * (1 - q)).sum()), EPS)
+
+
+def recalibration(kind: str, y: Floats, p: Floats, days: NDArray[Any] | None = None,
+                  prior_sd: float = PRIOR_SD, z: float = EVIDENCE_Z,
+                  ) -> Callable[[Floats], Floats]:  # fmt: skip
+    """A map from forecasts to recalibrated ones, fitted on a track record (with the days of
+    its rows, for the shifts that wait for evidence)."""
     if np.unique(y).size < 2:  # no event, or nothing else: no level to learn
         return _identity
-    if kind == "shift":
-        b = shift(y, p)
+    if kind in ("shift", "shrunk", "tested"):
+        if kind == "shift":
+            b = shift(y, p)
+        elif days is None:
+            raise ValueError(f"the {kind!r} shift needs the record's days")
+        else:
+            b, error = shift_error(y, p, days)
+            if kind == "shrunk":
+                b *= prior_sd**2 / (prior_sd**2 + error**2)
+            elif abs(b) < z * error:
+                return _identity
         return lambda q: 1 / (1 + np.exp(-(logit(q) + b)))
     if kind == "platt":
         intercept, slope = calibration(y, p)
@@ -85,9 +114,10 @@ def recalibration(kind: str, y: Floats, p: Floats) -> Callable[[Floats], Floats]
 
 
 def recalibrate(predictions: pl.DataFrame, models: Sequence[str], months: Sequence[date],
-                record: int, lag: int, kind: str = "shift") -> pl.DataFrame:  # fmt: skip
+                record: int, lag: int, kind: str = "shift", suffix: str = SUFFIX,
+                **options: float) -> pl.DataFrame:  # fmt: skip
     """The forecasts of ``models`` for ``months``, recalibrated on each month's track record,
-    as models named with ``SUFFIX``."""
+    as models named with ``suffix``."""
     frame = predictions.filter(pl.col("model").is_in(models)).with_columns(_m=_month_index())
     parts = []
     for (model, _), group in frame.group_by("model", "horizon", maintain_order=True):
@@ -100,8 +130,9 @@ def recalibrate(predictions: pl.DataFrame, models: Sequence[str], months: Sequen
             fitted: Callable[[Floats], Floats] = _identity
             if past["_m"].n_unique() == record:
                 y = past[LABEL].to_numpy().astype(np.float64)
-                fitted = recalibration(kind, y, past["p"].to_numpy())
-            parts.append(now.with_columns(model=pl.lit(f"{model}{SUFFIX}"),
+                days = past["local_date"].to_numpy() if kind in ("shrunk", "tested") else None
+                fitted = recalibration(kind, y, past["p"].to_numpy(), days, **options)
+            parts.append(now.with_columns(model=pl.lit(f"{model}{suffix}"),
                                           p=pl.Series(fitted(now["p"].to_numpy()))))  # fmt: skip
     return pl.concat(parts).drop("_m") if parts else predictions.clear()
 

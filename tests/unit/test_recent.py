@@ -1,10 +1,11 @@
 """Track records: their months, the level shift, recalibrated forecasts and alert thresholds."""
 
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import polars as pl
 import pytest
+from numpy.typing import NDArray
 
 from ordfi.models.metrics import brier
 from ordfi.models.recent import (
@@ -13,6 +14,7 @@ from ordfi.models.recent import (
     recalibration,
     record_months,
     shift,
+    shift_error,
     threshold,
     warm_up,
 )
@@ -40,14 +42,56 @@ def test_the_shift_matches_the_forecasts_level_to_the_outcomes() -> None:
         recalibration("isotonic", y, p)
 
 
+Record = tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.int64]]
+
+
+def record(days: int, hours: int, offset: float, seed: int = 0) -> Record:
+    """A track record of ``days`` days of ``hours`` rows each, forecasting 10 %, whose events
+    come a day at a time: each day's rows all have one, at the rate the offset gives."""
+    rng = np.random.default_rng(seed)
+    rate = 1 / (1 + np.exp(-(np.log(0.1 / 0.9) + offset)))
+    daily = (rng.uniform(size=days) < rate).astype(float)
+    return np.repeat(daily, hours), np.full(days * hours, 0.1), np.repeat(np.arange(days), hours)
+
+
+def test_a_days_rows_count_once_as_evidence() -> None:
+    y, p, days = record(300, 1, 0.5)
+    b, error = shift_error(y, p, days)
+    assert b == pytest.approx(shift(y, p)) and error == pytest.approx(0.19, abs=0.03)
+    y24, p24, days24 = record(300, 24, 0.5)  # the same days, each as 24 hours
+    b24, error24 = shift_error(y24, p24, days24)
+    assert b24 == pytest.approx(b) and error24 == pytest.approx(error, rel=1e-6)
+
+
+def test_the_shifts_that_wait_for_evidence() -> None:
+    def moved(kind: str, y: NDArray[np.float64], p: NDArray[np.float64],
+              days: NDArray[np.int64]) -> float:  # fmt: skip
+        q = recalibration(kind, y, p, days)(np.array([0.1]))[0]
+        return float(np.log(q / (1 - q)) - np.log(0.1 / 0.9))
+
+    strong, weak = record(3000, 1, 0.7), record(60, 1, 0.7, seed=3)
+    full_strong, full_weak = shift(*strong[:2]), shift(*weak[:2])
+    # Shrunk by its uncertainty: little with much evidence, much with little.
+    assert moved("shrunk", *strong) == pytest.approx(full_strong, rel=0.05)
+    assert 0 < moved("shrunk", *weak) < 0.75 * full_weak
+    # Tested: the whole shift once it clears two standard errors, else none.
+    assert moved("tested", *strong) == pytest.approx(full_strong)  # 16 standard errors
+    assert moved("tested", *weak) == 0  # 0.46 is 1.3 standard errors: not yet
+    assert moved("tested", *record(3000, 1, 0.0, seed=5)) == 0  # calibrated: left as is
+    with pytest.raises(ValueError, match="needs the record's days"):
+        recalibration("shrunk", strong[0], strong[1])
+
+
 def predictions(rates: dict[date, float], p: float = 0.1, rows: int = 400) -> pl.DataFrame:
-    """Model "m" forecasting ``p`` every row of each month; events at the month's rate."""
+    """Model "m" forecasting ``p`` every row of each month, 20 rows a day; events at the
+    month's rate."""
     parts = []
     for month, rate in rates.items():
         y = np.zeros(rows, dtype=np.int8)
         y[: round(rate * rows)] = 1
+        days = [month + timedelta(days=i // 20) for i in range(rows)]
         parts.append(
-            pl.DataFrame({"y": y, "p": np.full(rows, p)}).with_columns(
+            pl.DataFrame({"y": y, "p": np.full(rows, p), "local_date": days}).with_columns(
                 model=pl.lit("m"), horizon=pl.lit("d1_1900"), test_month=pl.lit(month)
             )
         )
@@ -62,6 +106,19 @@ def test_recalibrated_forecasts_follow_the_track_record() -> None:
     by_month = dict(fixed.group_by("test_month").agg(pl.col("p").mean()).iter_rows())
     assert by_month[date(2024, 8, 1)] == pytest.approx(0.1)  # only 5 months of record: as is
     assert by_month[date(2024, 9, 1)] == pytest.approx(0.3)
+
+
+def test_the_shrunk_shift_follows_the_month_before_part_way() -> None:
+    months = [date(2024, m, 1) for m in range(1, 8)]
+    frame = predictions({m: 0.3 for m in months})  # forecast 10 %, observed 30 %
+    fixed = recalibrate(frame, ["m"], [date(2024, 7, 1)], record=6, lag=1, kind="shrunk",
+                        suffix="_shrunk", prior_sd=0.25)  # fmt: skip
+    assert set(fixed["model"]) == {"m_shrunk"}
+    full = recalibrate(frame, ["m"], [date(2024, 7, 1)], record=6, lag=1)["p"].to_numpy()
+    assert 0.1 < fixed["p"].to_numpy().mean() < full.mean() == pytest.approx(0.3)
+    # Ending three months before, a six-month record would start before the forecasts do.
+    late = recalibrate(frame, ["m"], [date(2024, 7, 1)], 6, 3, "shrunk")["p"].to_numpy()
+    assert late.mean() == pytest.approx(0.1)
 
 
 def test_the_threshold_keeps_false_alarms_within_the_budget() -> None:

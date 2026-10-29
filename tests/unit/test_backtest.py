@@ -86,11 +86,12 @@ def test_a_run_never_learns_from_months_it_could_not_have_seen(
     assert set(predictions["model"]) == {
         "base_rate", "calendar", "announced", "gbdt_schedule", "gbdt", "gbdt_no_taf",
         "gbdt_no_guidance", "gbdt_no_atc", "gbdt_no_climate", "gbdt_no_staffing", "gbdt_no_ops",
-        "gbdt_recent",
+        "gbdt_recent", "gbdt_shrunk",
     }  # fmt: skip
     metrics = pl.read_parquet(out / "metrics.parquet")
     assert set(metrics["slice"]) == set(backtest.SLICES)
-    assert json.loads((out / "run.json").read_text())["label_lag_months"] == 2
+    settings = json.loads((out / "run.json").read_text())
+    assert settings["label_lag_months"] == 2 and settings["shrunk_shift"]["lag_months"] == 1
 
 
 def test_outlook_runs_forecast_a_track_record_and_score_only_the_test_months(
@@ -118,7 +119,8 @@ def test_worker_processes_forecast_as_one_process_does(tmp_path: Path) -> None:
                                      workers=n) / "predictions.parquet")
         for n in (1, 2)
     )  # fmt: skip
-    assert set(one["model"]) == {"calendar", "gbdt", "gbdt_recent"} and one.equals(two)
+    assert set(one["model"]) == {"calendar", "gbdt", "gbdt_recent", "gbdt_shrunk"}
+    assert one.equals(two)
 
 
 def test_the_cli_writes_the_run_and_prints_its_summary(
