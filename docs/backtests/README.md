@@ -1,6 +1,6 @@
 # Backtests
 
-`ordfi.models.backtest` scores probability forecasts on the as-of feature snapshots (`docs/features/`) with the research study's protocol (§6.5, §6.6). The baselines here are the bar every model must beat. The Outlook GBDT is the first model to beat them, hourly and daily.
+`ordfi.models.backtest` scores probability forecasts on the as-of feature snapshots (`docs/features/`) with the research study's protocol (§6.5, §6.6). The baselines here are the bar every model must beat. The Outlook GBDT is the first model to beat them, hourly and daily, and the departure GBDT for single flights.
 
 ```bash
 make backtest FROM=2024-09 TO=2026-08                       # every task; TASK=dep_late15 for one
@@ -19,7 +19,7 @@ A run writes `data/backtests/<task>/<run>/`:
 
 ## Protocol
 
-- **Rolling origin by month.** Each test month M is forecast by models fitted on every month up to M − 3. BTS publishes a month 6–8 weeks after it ends, so that is what was available at the start of M. The training window expands, and the folds keep whole days together.
+- **Rolling origin by month.** Each test month M is forecast by models fitted on every month up to M − 3. BTS publishes a month 6–8 weeks after it ends, so that is what was available at the start of M. The training window expands, and the folds keep whole days together. The departure tasks refit every quarter instead (their fits are 25 times larger): the three months of a quarter are forecast by the models fitted on the months up to three before its first.
 - **COVID months** (Mar 2020 – Jun 2021) are left out of training.
 - **Skill** is the Brier skill score against the calendar climatology. Its 95 % interval comes from resampling whole local days (200 bootstrap draws), since a day's flights share its weather and programs.
 - **Scores:**
@@ -35,14 +35,14 @@ A run writes `data/backtests/<task>/<run>/`:
   - the FAA operations cap (from 2 Jun 2026);
   - each test month.
 - **Track record** (outlook tasks). The 14 months before the first test month are forecast too, but not scored. Each test month's alert threshold is set on the forecasts and outcomes of the 12 months that end with the last month BTS has published (below).
-- **Workers.** Test months are independent, so their folds run in parallel worker processes (`WORKERS`). The default is one per CPU for the hourly tasks and a single process for the departure tasks, whose fits take seconds and whose rows would be copied to every worker. Results do not depend on the number of workers. Threads are not used: LightGBM keeps its thread count in process-wide state, and boosters trained in concurrent threads crash or corrupt memory.
+- **Workers.** Test months (or quarters) are independent, so their folds run in parallel worker processes (`WORKERS`). The default is one per CPU for the hourly and daily tasks. The departure tasks run three at a time, each fit on six threads: their 1.6 GB of rows per horizon are copied to every worker, and LightGBM's threads gain little past six on their 2.6 M-row fits (43 s on 18 threads, 57 s on 6). Results do not depend on the number of workers. Threads are not used to run folds: LightGBM keeps its thread count in process-wide state, and boosters trained in concurrent threads crash or corrupt memory.
 
 ## Tasks
 
 | Task | Spine | Event | Study target |
 |---|---|---|---|
-| `dep_late15` | departures | leaves 15+ min late or is cancelled | T2 |
-| `dep_late60` | departures | leaves 60+ min late or is cancelled | T2 |
+| `dep_late15` | departures with a tail in BTS | leaves 15+ min late or is cancelled | T2 |
+| `dep_late60` | departures with a tail in BTS | leaves 60+ min late or is cancelled | T2 |
 | `dep_cancelled` | departures | cancelled | T5 |
 | `hour_bad60` | hours with 10+ departures | 20 %+ of the hour's departures 60+ min late or cancelled | T1 |
 | `hour_gdp` | hours | a general GDP in effect during the hour | T1 |
@@ -52,7 +52,7 @@ A run writes `data/backtests/<task>/<run>/`:
 | `day_gdp` | local days | a general GDP in effect at some time in the day | T1 |
 | `day_ground_stop` | local days | a general ground stop in effect at some time in the day | T1 |
 
-All rows are scored, cancelled flights included.
+All rows are scored, cancelled flights included. The delay tasks leave out the departures BTS gives no tail, all of them cancelled (*Departure GBDT*).
 
 ## Baselines
 
@@ -83,6 +83,8 @@ Run `baselines-2024-09-to-2026-08`: 24 test months, Sep 2024 – Aug 2026, in 3.
 | `hour_ground_stop` (3.2 %) | `announced` | −0.017 | −0.014 | 0.011 | 0.106 [0.082, 0.130] | 0.374 |
 
 † No tails are known 24 h out, so the slack rule falls back to the base rate.
+
+The delay tasks have since left out the departures without a tail (*Departure GBDT*), which moves these baselines by at most 0.010.
 
 **Findings:**
 
@@ -761,3 +763,88 @@ Run `outlook-window-2024-09-to-2026-08`: the reported months, in 7 minutes. Brie
 - **No v0.1 target was set for windows.** The 0.25 at 6 h was set for single hours. The window comes near it, but it is a different and easier event.
 - **The window starts at the target hour,** so a forecast 15 minutes ahead covers the next 3 hours and 15 minutes.
 - **Some variants score within noise of it.** At 6 h, `gbdt_shrunk` and the model without the program climate score 0.249 against the GBDT's 0.245. Neither was chosen for this task.
+
+## Departure GBDT
+
+`gbdt.departure`: the Outlook GBDT's classifier on the departures spine, for the three departure tasks (study T2 and T5). There is one model per task and horizon, from 24 h to 15 min before the scheduled departure.
+
+- **Inputs:** the departures spine's 79 features, each as known at `as_of` (`docs/features/`):
+  - the airport's state, as for the hours: the calendar, METARs, the TAF for the departure hour, FAA programs with their recent climate and staffing cause, the last hours' operations and the hour's scheduled demand;
+  - the flight's carrier, destination, distance and scheduled block time (`flt_`);
+  - its inbound aircraft, from 6 h out, when tails become known (`inb_`): the previous ORD arrival's origin, scheduled turn, delays so far, known lateness and the turn slack left.
+- **Settings:** the Outlook GBDT's, unchanged. Twelve held-out months choose the number of trees and fit the Platt recalibration, and the trees are then refit on the whole window.
+- **No development run.** Nothing was chosen for the departures, so the reported months are the model's first test.
+- **Refits every quarter,** with three fits at once on six threads each (*Protocol*). On four months where it makes a difference (Oct – Nov 2024 and Jan – Feb 2025, the second and third months of the first two quarters), monthly refits score 0.150 at 6 h and 0.305 at 1 h for `dep_late15`, against 0.150 and 0.304.
+
+| Model | Features | Tasks |
+|---|---|---|
+| `gbdt` | all 79 | `dep_late15`, `dep_late60` |
+| `gbdt` | all but the inbound aircraft (70) | `dep_cancelled` |
+| `gbdt_no_inbound` | all but the inbound aircraft (70) | `dep_late15`, `dep_late60`: the inbound's value (ablation, study §6.5) |
+
+### A missing tail gave cancellations away
+
+BTS gives no tail for 25,889 departures since 2015, all of them cancelled: 29 % of the cancellations. From 6 h out, `inb_found` is null for them and only for them, so a model that reads it can tell these flights were cancelled. The first full run was stopped for this.
+
+- **Training without them was not enough.** In a trial on Sep 2024 – Feb 2025 at 1 h, they still got 0.51 on average from the GBDT, against 0.33 from the model without the inbound features and 0.18 for other flights. A null inbound reads like an inbound not found, and those flights are late half the time.
+- **The fix:** the delay tasks train on and score only the departures with a tail (`backtest.WITH_TAIL`), and the cancellation GBDT reads no inbound features. The baselines were already clean, since the slack rule gives an unknown slack its parent's rate. A unit test checks both.
+- **The delay tasks leave out 0.4 % of the reported months' departures,** which are 20 % of their cancellations. The cancellation task keeps every departure.
+
+### Results
+
+Run `departure-gbdt-2024-09-to-2026-08`: the reported months, in 79 minutes for the three tasks. Brier skill against the calendar climatology, pooled, with the 95 % interval at 24 h, 6 h and 1 h, beside the best baseline at each horizon (the route climatology or persistence to 6 h, then the slack rule; persistence for cancellations):
+
+| Task (base rate) | Model | 24 h | 6 h | 3 h | 1 h | 15 min |
+|---|---|---|---|---|---|---|
+| `dep_late15` (25.8 %) | `gbdt` | 0.067 [0.050, 0.082] | 0.190 [0.173, 0.205] | 0.283 | 0.377 [0.363, 0.392] | 0.448 |
+| | `gbdt_no_inbound` | 0.067 | 0.118 [0.098, 0.136] | 0.144 | 0.161 [0.140, 0.181] | 0.165 |
+| | best baseline | 0.003 | 0.003 | 0.052 | 0.199 | 0.219 |
+| `dep_late60` (11.8 %) | `gbdt` | 0.064 [0.044, 0.081] | 0.199 [0.176, 0.218] | 0.294 | 0.407 [0.385, 0.427] | 0.430 |
+| | `gbdt_no_inbound` | 0.064 | 0.134 [0.108, 0.155] | 0.170 | 0.191 [0.160, 0.219] | 0.196 |
+| | best baseline | 0.005 | 0.003 | 0.051 | 0.246 | 0.253 |
+| `dep_cancelled` (2.0 %) | `gbdt` | 0.051 [0.030, 0.071] | 0.123 [0.082, 0.157] | 0.172 | 0.206 [0.146, 0.252] | 0.216 |
+| | best baseline | 0.008 | 0.009 | 0.036 | 0.062 | 0.069 |
+
+**Findings:**
+
+- **The GBDT beats every baseline at every horizon,** in all three tasks, with its interval above the best baseline's skill.
+- **It is calibrated:** calibration errors of at most 0.011, and slopes of 0.90–1.04. Its level drifts in two places, though (caveats).
+- **A day ahead the skill is small, and it is the disruption days'.** `dep_late15` scores 0.067: 0.175 on days with a GDP or ground stop, 0.164 on thunder days and 0.173 on snow days, but 0.014 on days without a program. The study expected this (§6.3). Tails are not known 24 h out, so both GBDTs are the same there.
+- **From 6 h the inbound aircraft carries most of the skill.** It lifts `dep_late15` from 0.118 to 0.190 at 6 h, and from 0.161 to 0.377 at 1 h. Without it, the GBDT falls below the slack rule from 1 h.
+- **The skill is broad.** It is positive in every month from 6 h for the delay tasks (the weakest scores 0.094 at 6 h for `dep_late15` and 0.071 for `dep_late60`), and in 22–23 of 24 months a day ahead. For cancellations it is positive in 21–23 of 24 months.
+- **By season,** `dep_late15` at 6 h scores 0.172 (summer) to 0.215 (spring). Cancellations at 1 h score 0.096 in winter and 0.216–0.249 in the other seasons.
+- **The thresholds are not ordered.** Each event has its own model, so the 60-minute forecast exceeds the 15-minute one for 0.03–0.33 % of flights, by up to 0.20. The study's ordered-bucket model (§6.4) would rule that out.
+
+### Where the skill comes from
+
+The inbound aircraft's gain is the Brier score of `dep_late15` without the inbound features minus with them. Here it is split by what was known of the inbound at `as_of`:
+
+| Inbound at `as_of` | 6 h: flights | late | share of the gain | 1 h: flights | late | share of the gain |
+|---|---|---|---|---|---|---|
+| not landed, not known late | 79 % | 24 % | 59 % | 14 % | 25 % | 7 % |
+| known late | 9 % | 30 % | 11 % | 33 % | 43 % | 58 % |
+| landed on time | 7 % | 25 % | 10 % | 48 % | 12 % | 28 % |
+| not found | 5 % | 49 % | 19 % | 5 % | 49 % | 6 % |
+
+- **At 1 h the gain is the inbound's progress.** Flights whose inbound is known to be late give 58 % of it, and those whose inbound has landed on time another 28 %. This is the study's inbound readiness (§6.4), which a live feed of the planned aircraft would see too.
+- **At 6 h most inbounds have not left yet** (97 % of the first row's). Most of the gain there is what the rotation says: the inbound's origin and scheduled turn.
+- **Flights whose inbound is not found** (5 %, half of them late) give 19 % of the gain at 6 h, and 36 % for `dep_late60`. Swaps and inbound cancellations hide among them (`docs/features/`).
+- **The strongest inputs** (mean absolute SHAP contribution) of the last quarter's models are:
+  - for `dep_late15` a day ahead: the departure's local hour, the temperature, the share of departures late in the three hours before `as_of` (the same time the day before), the carrier, the staffing cause's 30-day count and the TAF's ceiling;
+  - at 1 h: the inbound's turn slack, four times any other input;
+  - for `dep_cancelled` a day ahead: the carrier, the TAF's ceiling, the temperature and the destination;
+  - at 1 h: how many of the last hour's scheduled departures have left (`ops_dep_flow_1h`), then the destination.
+
+**Caveats:**
+
+- **The inbound gain is optimistic, more so at 6 h.** BTS records the aircraft that flew, after any swap, while a forecast 6 h out sees the aircraft planned then. The gap between the two GBDTs prices a live inbound feed (study §6.5): at most 0.07 at 6 h and 0.22 at 1 h for `dep_late15`. `gbdt_no_inbound` is what is left without one.
+- **The cancellation task cannot tell decided cancellations from open ones.** BTS has no decision time (study §6.4). At 1 h, many cancellations were already made, and shown by the airline, before `as_of`, and the forecast partly finds them.
+- **The level drifts:**
+  - In the FAA cap months (Jun – Aug 2026), the delay forecasts ran high: 37–38 % at 24 h and 6 h against 30.7 % observed, a calibration error of 0.067–0.073 for `dep_late15`.
+  - Most of that is the recalibration. Its map was fitted on the held-out year, Apr 2025 – Mar 2026, which the first trees under-forecast (23.5 % against 27.8 % late at 24 h). The refit trees had learned that year, and forecast June – August at 31.7 % against 30.5 %. The map lifted them to 37.8 %, so their skill there fell from 0.061 to 0.030 at 24 h (0.200 to 0.176 at 6 h).
+  - Cancellation forecasts ran low: 1.5 % at 24 h and 1.7 % at 1 h, against 2.0 %. Every month from November 2025 to July 2026 had more cancellations than forecast 6 h ahead (1.0–5.6 % against 0.8–2.9 %).
+  - From 7 to 14 November 2025, during the FAA's shutdown flight cuts, 2–6 % of departures were cancelled on the days without snow, forecast at under 1 %. A snowstorm on 9–10 November cancelled 20–29 %, forecast at 3–8 %.
+- **The departures spine has no station guidance.** It lifted the bad-hour outlook at 24 h from 0.249 to 0.297, so it may help the day-ahead departure forecasts too.
+- **The settings were chosen for the hourly tasks,** whose fits are 25 times smaller. Larger trees may suit 2.6 M rows; this is untested.
+- **The delay tasks leave out 20 % of cancellations** (the departures without a tail, above).
+- **In-day operations and the inbound's progress assume each departure and arrival is known when it happens** (`docs/features/`). The live archive will measure the real lag.

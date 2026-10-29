@@ -83,7 +83,7 @@ Daily, Brier skill on the same months (730 days):
 
 - **For:** the public ORD Outlook, i.e. how likely a bad hour, a GDP or a ground stop is from three days to 15 minutes ahead. Also for research on what drives ORD disruption.
 - **Not for:**
-  - individual flights (see the departure tasks);
+  - individual flights (see [`departure-gbdt`](departure-gbdt.md));
   - operational decisions by airlines or the FAA;
   - beyond 72 h (the guidance runs out).
 - **Limitations:**

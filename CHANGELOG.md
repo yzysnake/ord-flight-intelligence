@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- The departure GBDT (`gbdt.departure`) for `dep_late15`, `dep_late60` and `dep_cancelled`: the Outlook GBDT's settings on the departures spine's 79 features, with the `gbdt_no_inbound` ablation for the delay tasks. Model card `docs/model-cards/departure-gbdt.md`.
+  - BTS gives no tail for 29 % of cancelled departures, and only for those, so their null inbound revealed the cancellation. The delay tasks now train on and score only the departures with a tail, and the cancellation GBDT reads no inbound features. A unit test checks both.
+  - The departure tasks refit every quarter, three folds at once on six threads each. On four months, monthly refits would have scored within 0.001.
+  - On Sep 2024 – Aug 2026 it beats every baseline at every horizon. `dep_late15` scores 0.067 at 24 h, 0.190 at 6 h and 0.377 at 1 h (0.067, 0.118 and 0.161 without the inbound aircraft). `dep_late60` scores 0.064, 0.199 and 0.407, and `dep_cancelled` 0.051, 0.123 and 0.206. Calibration error is at most 0.011.
+  - At 1 h most of the inbound gain is the inbound's known lateness. At 6 h a fifth of it comes from flights whose inbound is not found, where post-hoc tails hide swaps.
+  - The level drifts. Delay forecasts ran high in the FAA cap months (37–38 % against 31 %), mostly because the Platt map, fitted on a held-out year with more delays, lifted refit trees that had already learned that year (32 % on their own). Cancellation forecasts ran low (1.5 % against 2.0 % at 24 h).
 - A windowed ground-stop task, `hour_ground_stop_3h`: a general ORD ground stop at some time in the 3 hours from the target hour, at the hourly horizons.
   - The hours spine gets the label `y_ground_stop_3h`, and 25 summaries of the window (`taf_win_`, `mos_win_`, `nbm_win_`, `atc_win_`, `dem_win_`), built by the day groups on a 3-hour span. Only this task reads them, and the other hourly models are unchanged.
   - Checks: the property tests cover the window, and a leak through its announced programs is caught in 8 of 8 runs. No mismatches in 1,200 real hours.
@@ -136,7 +142,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - `--horizons` defaults to each task's own horizons or issue times. A requested horizon applies to the tasks whose spine has it.
-- The backtest harness runs a subset of models (`--models`, `MODELS=`; the calendar reference always runs). It fits test months in parallel worker processes (`--workers`, `WORKERS=`): one per CPU for the hourly tasks by default, one process for the departure tasks. Processes, not threads, because LightGBM boosters trained in concurrent threads corrupt memory.
+- The backtest harness runs a subset of models (`--models`, `MODELS=`; the calendar reference always runs). It fits test months in parallel worker processes (`--workers`, `WORKERS=`): one per CPU for the hourly and daily tasks by default, three for the departure tasks (six threads each). Processes, not threads, because LightGBM boosters trained in concurrent threads corrupt memory.
 - mypy skips scikit-learn imports, which ship no type information.
 - Flight-category logic is a shared dbt macro, used by `weather_obs`, `weather_obs_hourly` and `taf_hourly`.
 - `flight_leg` reads from `int_bts_legs`. Tail numbers are upper-cased, and placeholders shorter than 4 characters become null.

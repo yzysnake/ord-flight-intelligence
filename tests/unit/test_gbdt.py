@@ -7,12 +7,14 @@ import polars as pl
 import pytest
 
 from ordfi.features import build
-from ordfi.features.spines import days, hours
+from ordfi.features.spines import days, departures, hours
 from ordfi.models.backtest import add_months
 from ordfi.models.gbdt import (
     DAY_FEATURES,
+    DEPARTURE_FEATURES,
     GBDT,
     OUTLOOK_FEATURES,
+    departure,
     encode,
     outlook,
     recalibration,
@@ -122,3 +124,19 @@ def test_the_daily_outlook_reads_every_feature_of_the_days_spine() -> None:
     daily = outlook("d", spine="days")
     assert daily.columns() == set(DAY_FEATURES) and daily.validation_months == 24
     assert outlook("h").validation_months == 12
+
+
+def test_the_departure_model_reads_every_feature_of_the_departures_spine() -> None:
+    start = datetime(2019, 7, 15, 12, tzinfo=UTC)
+    flight = {"flight_key": "f", "direction": "departure", "operating_carrier": "UA",
+              "origin": "ORD", "dest": "LGA", "sched_dep_utc": start,
+              "sched_arr_utc": start + timedelta(hours=2), "cancelled": False}  # fmt: skip
+    t = tables(date(2019, 7, 15), legs=[flight])
+    frame = build.build("departures", departures(t.legs, start, start + timedelta(hours=1),
+                                                 ["1h"]), t)  # fmt: skip
+    keys = {"flight_key", "target_utc", "horizon", "as_of", "licence_class"}
+    produced = {c for c in frame.columns if c not in keys and not c.startswith("y_")}
+    assert produced == set(DEPARTURE_FEATURES) and len(DEPARTURE_FEATURES) == len(produced)
+    assert departure().columns() == set(DEPARTURE_FEATURES)
+    assert not any(f.startswith("inb_") for f in departure("n", without=("inb_",)).features)
+    assert departure().params["num_threads"] > 1  # folds run three at a time, not one per CPU

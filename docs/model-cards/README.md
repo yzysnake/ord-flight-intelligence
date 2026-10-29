@@ -5,6 +5,7 @@ One card per released model, or candidate for release (`<model-id>.md`), updated
 | Card | Status |
 |---|---|
 | [`outlook-gbdt`](outlook-gbdt.md) | candidate for v0.1 |
+| [`departure-gbdt`](departure-gbdt.md) | research model, not planned for v0.1 |
 
 Use these headings:
 
